@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { JourneyRenderer } from "./webgpu/renderer.js";
-import { MOODS } from "./webgpu/moodEngine.js";
+import { AUTHORING_CONTROLS, MOODS } from "./webgpu/moodEngine.js";
 
 const canvas = ref(null);
 const state = ref("loading");
@@ -16,8 +16,13 @@ const cycleSeconds = ref(14);
 const feedbackAmount = ref(0.3);
 const vignetteStrength = ref(1);
 const fps = ref(0);
-const renderSize = ref("-");
-const sceneTime = ref(0);
+const renderSize = ref("—");
+const renderScale = ref(1);
+const travelTime = ref(0);
+const ambientTime = ref(0);
+const authoringVisible = ref(false);
+const authoringValues = ref({});
+const copyStatus = ref("COPY STATE");
 
 let renderer = null;
 let statsTimer = 0;
@@ -58,12 +63,45 @@ async function captureStill() {
     }
 }
 
+function overrideMood(key, value) {
+    renderer?.setMoodOverride(key, value);
+}
+
+function clearMoodOverrides() {
+    renderer?.clearMoodOverrides();
+}
+
+async function copyMoodState() {
+    const mood = renderer?.getStats().mood;
+    if (!mood) return;
+    const snapshot = {
+        id: mood.id,
+        low: mood.low.map((value) => Number(value.toFixed(4))),
+        high: mood.high.map((value) => Number(value.toFixed(4))),
+        world: Object.fromEntries(
+            AUTHORING_CONTROLS.map(({ key }) => [
+                key,
+                Number(mood[key].toFixed(4)),
+            ]),
+        ),
+    };
+
+    try {
+        await navigator.clipboard.writeText(JSON.stringify(snapshot, null, 2));
+        copyStatus.value = "COPIED";
+    } catch {
+        copyStatus.value = "COPY FAILED";
+    }
+    window.setTimeout(() => (copyStatus.value = "COPY STATE"), 1400);
+}
+
 function onKeydown(event) {
     if (
-        event.target instanceof HTMLInputElement ||
-        event.target instanceof HTMLSelectElement
-    )
-        return;
+        event.target instanceof Element &&
+        event.target.closest(
+            "button, input, select, textarea, [contenteditable='true']",
+        )
+    ) return;
     if (event.code === "Space") {
         event.preventDefault();
         toggleTravel();
@@ -77,7 +115,9 @@ function onKeydown(event) {
 }
 
 watch(travelSpeed, (value) => renderer?.setTravelSpeed(value));
-watch(moodId, (value) => renderer?.setMood(value));
+watch(moodId, (value) => {
+    if (renderer?.getStats().moodId !== value) renderer?.setMood(value);
+});
 watch(moodIntensity, (value) => renderer?.setMoodIntensity(value));
 watch(autoMood, (value) => renderer?.setAutoMood(value));
 watch(cycleSeconds, (value) => renderer?.setMoodCycleSeconds(value));
@@ -93,7 +133,13 @@ onMounted(async () => {
             return;
         }
 
-        renderer = new JourneyRenderer(canvas.value);
+        renderer = new JourneyRenderer(canvas.value, {
+            onFatalError(error) {
+                state.value = "error";
+                message.value =
+                    error instanceof Error ? error.message : String(error);
+            },
+        });
         await renderer.init();
         renderer.setTravelRunning(travelRunning.value);
         renderer.setTravelSpeed(travelSpeed.value);
@@ -111,8 +157,13 @@ onMounted(async () => {
             if (!stats) return;
             fps.value = stats.fps;
             renderSize.value = `${stats.width}×${stats.height}`;
-            sceneTime.value = stats.sceneTime;
+            renderScale.value = stats.renderBudgetScale;
+            travelTime.value = stats.travelTime;
+            ambientTime.value = stats.ambientTime;
             travelRunning.value = stats.travelRunning;
+            authoringValues.value = Object.fromEntries(
+                AUTHORING_CONTROLS.map(({ key }) => [key, stats.mood[key]]),
+            );
             if (autoMood.value && stats.moodId !== moodId.value)
                 moodId.value = stats.moodId;
         }, 300);
@@ -161,9 +212,61 @@ onBeforeUnmount(() => {
                     <div class="telemetry" aria-label="Renderer telemetry">
                         <span><i></i> WEBGPU</span>
                         <span>{{ fps || ">" }} FPS</span>
-                        <span>{{ renderSize }}</span>
+                        <span>
+                            {{ renderSize }}
+                            <template v-if="renderScale < 0.995">
+                                · {{ Math.round(renderScale * 100) }}%
+                            </template>
+                        </span>
+                        <button
+                            class="telemetry-button"
+                            type="button"
+                            :aria-pressed="authoringVisible"
+                            @click="authoringVisible = !authoringVisible"
+                        >
+                            {{ authoringVisible ? "CLOSE LAB" : "MOOD LAB" }}
+                        </button>
                     </div>
                 </header>
+
+                <aside
+                    v-if="authoringVisible"
+                    class="authoring-drawer"
+                    aria-label="Mood authoring laboratory"
+                >
+                    <div class="panel-head">
+                        <span>MOOD LAB / RESOLVED WORLD</span>
+                        <span>A {{ ambientTime.toFixed(1) }}s</span>
+                    </div>
+
+                    <label
+                        v-for="control in AUTHORING_CONTROLS"
+                        :key="control.key"
+                        class="range-row compact-row"
+                    >
+                        <span>
+                            {{ control.label }}
+                            <output>{{ authoringValues[control.key]?.toFixed(2) ?? "—" }}</output>
+                        </span>
+                        <input
+                            v-model.number="authoringValues[control.key]"
+                            type="range"
+                            :min="control.min"
+                            :max="control.max"
+                            :step="control.step"
+                            @input="overrideMood(control.key, authoringValues[control.key])"
+                        />
+                    </label>
+
+                    <div class="button-row">
+                        <button type="button" @click="clearMoodOverrides">
+                            CLEAR OVERRIDES
+                        </button>
+                        <button type="button" @click="copyMoodState">
+                            {{ copyStatus }}
+                        </button>
+                    </div>
+                </aside>
 
                 <div class="crosshair" aria-hidden="true">
                     <span></span>
@@ -175,7 +278,7 @@ onBeforeUnmount(() => {
                     <section class="panel transport-panel">
                         <div class="panel-head">
                             <span>01 / TRANSPORT</span>
-                            <time>{{ sceneTime.toFixed(1) }}s</time>
+                            <time>{{ travelTime.toFixed(1) }}s</time>
                         </div>
 
                         <button

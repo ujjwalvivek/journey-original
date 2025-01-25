@@ -3,14 +3,17 @@ import bufferASource from "../shaders/bufferA.wgsl?raw";
 import imageSource from "../shaders/image.wgsl?raw";
 import { loadExactNoiseTexture } from "./textures.js";
 import { MoodEngine } from "./moodEngine.js";
+import { fitRenderSize } from "./renderBudget.js";
 
 const BUFFER_FORMAT = "rgba16float";
-const UNIFORM_FLOATS = 16;
+const UNIFORM_FLOATS = 28;
 const UNIFORM_BYTES = UNIFORM_FLOATS * 4;
 
 export class JourneyRenderer {
-    constructor(canvas) {
+    constructor(canvas, { onFatalError = () => {} } = {}) {
         this.canvas = canvas;
+        this.onFatalError = onFatalError;
+        this.destroyed = false;
         this.context = null;
         this.adapter = null;
         this.device = null;
@@ -32,8 +35,9 @@ export class JourneyRenderer {
         this.sourceSampler = null;
 
         this.moodEngine = new MoodEngine();
-        this.sceneTime = 0;
-        this.moodTime = 0;
+        this.travelTime = 0;
+        this.ambientTime = 0;
+        this.resolvedMood = this.moodEngine.update(performance.now() / 1000);
         this.travelRunning = true;
         this.travelSpeed = 1;
         this.feedbackAmount = 0.3;
@@ -46,6 +50,7 @@ export class JourneyRenderer {
         this.fpsAccumulator = 0;
         this.fpsFrames = 0;
         this.fpsWindowStart = 0;
+        this.renderBudgetScale = 1;
 
         this.resizeObserver = new ResizeObserver(() => this.resize());
         this.render = this.render.bind(this);
@@ -60,8 +65,19 @@ export class JourneyRenderer {
 
         this.device = await this.adapter.requestDevice();
         this.device.lost.then((info) => {
-            console.error("WebGPU device lost:", info);
+            if (this.destroyed) return;
+            const error = new Error(
+                `WebGPU device lost (${info.reason || "unknown"}): ${info.message || "no details"}`,
+            );
+            console.error(error);
             this.stopRenderer();
+            this.onFatalError(error);
+        });
+        this.device.addEventListener("uncapturederror", (event) => {
+            if (this.destroyed) return;
+            console.error("Uncaptured WebGPU error:", event.error);
+            this.stopRenderer();
+            this.onFatalError(event.error);
         });
 
         this.context = this.canvas.getContext("webgpu");
@@ -173,9 +189,14 @@ export class JourneyRenderer {
         )
             return;
 
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
-        const width = Math.max(1, Math.floor(this.canvas.clientWidth * dpr));
-        const height = Math.max(1, Math.floor(this.canvas.clientHeight * dpr));
+        const renderSize = fitRenderSize({
+            cssWidth: this.canvas.clientWidth,
+            cssHeight: this.canvas.clientHeight,
+            devicePixelRatio: window.devicePixelRatio || 1,
+            maxDimension: this.device.limits.maxTextureDimension2D,
+        });
+        const { width, height } = renderSize;
+        this.renderBudgetScale = renderSize.budgetScale;
 
         if (
             !force &&
@@ -304,13 +325,21 @@ export class JourneyRenderer {
         this.moodEngine.setCycleSeconds(value);
     }
 
+    setMoodOverride(key, value) {
+        return this.moodEngine.setOverride(key, value);
+    }
+
+    clearMoodOverrides() {
+        this.moodEngine.clearOverrides();
+    }
+
     nextMood() {
         return this.moodEngine.next();
     }
 
     resetJourney() {
-        this.sceneTime = 0;
-        this.moodTime = 0;
+        this.travelTime = 0;
+        this.ambientTime = 0;
         this.clearFeedback();
     }
 
@@ -319,9 +348,12 @@ export class JourneyRenderer {
             fps: this.fps,
             width: this.canvas.width,
             height: this.canvas.height,
+            renderBudgetScale: this.renderBudgetScale,
             travelRunning: this.travelRunning,
-            sceneTime: this.sceneTime,
+            travelTime: this.travelTime,
+            ambientTime: this.ambientTime,
             moodId: this.moodEngine.currentId,
+            mood: this.resolvedMood,
         };
     }
 
@@ -335,6 +367,7 @@ export class JourneyRenderer {
     }
 
     destroy() {
+        this.destroyed = true;
         this.stopRenderer();
         this.resizeObserver.disconnect();
         this.feedbackTextures.forEach((texture) => texture.destroy());
@@ -344,11 +377,12 @@ export class JourneyRenderer {
 
     writeUniforms(nowSeconds) {
         const mood = this.moodEngine.update(nowSeconds);
+        this.resolvedMood = mood;
 
         this.uniformData[0] = this.canvas.width;
         this.uniformData[1] = this.canvas.height;
-        this.uniformData[2] = this.sceneTime;
-        this.uniformData[3] = this.moodTime;
+        this.uniformData[2] = this.travelTime;
+        this.uniformData[3] = this.ambientTime;
 
         this.uniformData[4] = mood.low[0];
         this.uniformData[5] = mood.low[1];
@@ -363,7 +397,22 @@ export class JourneyRenderer {
         this.uniformData[12] = mood.intensity;
         this.uniformData[13] = this.vignetteStrength;
         this.uniformData[14] = this.feedbackAmount;
-        this.uniformData[15] = 0;
+        this.uniformData[15] = mood.exposure;
+
+        this.uniformData[16] = mood.cloudCoverage;
+        this.uniformData[17] = mood.cloudHeight;
+        this.uniformData[18] = mood.cloudScale;
+        this.uniformData[19] = mood.turbulence;
+
+        this.uniformData[20] = mood.windSpeed;
+        this.uniformData[21] = mood.smokeAmount;
+        this.uniformData[22] = mood.fogDensity;
+        this.uniformData[23] = mood.contrast;
+
+        this.uniformData[24] = mood.trainEmphasis;
+        this.uniformData[25] = mood.bridgeEmphasis;
+        this.uniformData[26] = mood.ambientDrift;
+        this.uniformData[27] = 0;
 
         this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
     }
@@ -376,8 +425,8 @@ export class JourneyRenderer {
         );
         this.lastFrameAt = now;
 
-        if (this.travelRunning) this.sceneTime += delta * this.travelSpeed;
-        this.moodTime += delta;
+        if (this.travelRunning) this.travelTime += delta * this.travelSpeed;
+        this.ambientTime += delta;
 
         this.fpsAccumulator += delta;
         this.fpsFrames += 1;
