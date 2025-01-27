@@ -1,7 +1,7 @@
 struct Uniforms {
   resolution: vec2f,
   travelTime: f32,
-  ambientTime: f32,
+  reservedTime: f32,
   moodLow: vec4f,
   moodHigh: vec4f,
   grade: vec4f,

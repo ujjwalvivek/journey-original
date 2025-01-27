@@ -4,6 +4,7 @@ import imageSource from "../shaders/image.wgsl?raw";
 import { loadExactNoiseTexture } from "./textures.js";
 import { MoodEngine } from "./moodEngine.js";
 import { fitRenderSize } from "./renderBudget.js";
+import { EnvironmentClock } from "./environmentClock.js";
 
 const BUFFER_FORMAT = "rgba16float";
 const UNIFORM_FLOATS = 28;
@@ -35,8 +36,7 @@ export class JourneyRenderer {
         this.sourceSampler = null;
 
         this.moodEngine = new MoodEngine();
-        this.travelTime = 0;
-        this.ambientTime = 0;
+        this.clock = new EnvironmentClock();
         this.resolvedMood = this.moodEngine.update(performance.now() / 1000);
         this.travelRunning = true;
         this.travelSpeed = 1;
@@ -338,8 +338,7 @@ export class JourneyRenderer {
     }
 
     resetJourney() {
-        this.travelTime = 0;
-        this.ambientTime = 0;
+        this.clock.reset();
         this.clearFeedback();
     }
 
@@ -350,8 +349,8 @@ export class JourneyRenderer {
             height: this.canvas.height,
             renderBudgetScale: this.renderBudgetScale,
             travelRunning: this.travelRunning,
-            travelTime: this.travelTime,
-            ambientTime: this.ambientTime,
+            travelTime: this.clock.travelTime,
+            windTime: this.clock.windPhase,
             moodId: this.moodEngine.currentId,
             mood: this.resolvedMood,
         };
@@ -375,14 +374,13 @@ export class JourneyRenderer {
         this.uniformBuffer?.destroy();
     }
 
-    writeUniforms(nowSeconds) {
-        const mood = this.moodEngine.update(nowSeconds);
+    writeUniforms(mood) {
         this.resolvedMood = mood;
 
         this.uniformData[0] = this.canvas.width;
         this.uniformData[1] = this.canvas.height;
-        this.uniformData[2] = this.travelTime;
-        this.uniformData[3] = this.ambientTime;
+        this.uniformData[2] = this.clock.travelTime;
+        this.uniformData[3] = 0;
 
         this.uniformData[4] = mood.low[0];
         this.uniformData[5] = mood.low[1];
@@ -411,22 +409,19 @@ export class JourneyRenderer {
 
         this.uniformData[24] = mood.trainEmphasis;
         this.uniformData[25] = mood.bridgeEmphasis;
-        this.uniformData[26] = mood.ambientDrift;
-        this.uniformData[27] = 0;
+        this.uniformData[26] = 0;
+        this.uniformData[27] = this.clock.windPhase;
 
         this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
     }
 
-    updateClock(now) {
+    frameDelta(now) {
         if (!this.lastFrameAt) this.lastFrameAt = now;
         const delta = Math.min(
             0.1,
             Math.max(0, (now - this.lastFrameAt) / 1000),
         );
         this.lastFrameAt = now;
-
-        if (this.travelRunning) this.travelTime += delta * this.travelSpeed;
-        this.ambientTime += delta;
 
         this.fpsAccumulator += delta;
         this.fpsFrames += 1;
@@ -435,14 +430,21 @@ export class JourneyRenderer {
             this.fpsAccumulator = 0;
             this.fpsFrames = 0;
         }
+        return delta;
     }
 
     render(now) {
         if (!this.running || !this.device || this.feedbackTextures.length !== 2)
             return;
 
-        this.updateClock(now);
-        this.writeUniforms(now / 1000);
+        const delta = this.frameDelta(now);
+        const mood = this.moodEngine.update(now / 1000);
+        this.clock.advance(delta, {
+            travelRunning: this.travelRunning,
+            travelSpeed: this.travelSpeed,
+            windSpeed: mood.windSpeed,
+        });
+        this.writeUniforms(mood);
 
         const writeIndex = 1 - this.readIndex;
         const encoder = this.device.createCommandEncoder({

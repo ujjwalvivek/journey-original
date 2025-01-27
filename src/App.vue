@@ -19,7 +19,7 @@ const fps = ref(0);
 const renderSize = ref("—");
 const renderScale = ref(1);
 const travelTime = ref(0);
-const ambientTime = ref(0);
+const windTime = ref(0);
 const authoringVisible = ref(false);
 const authoringValues = ref({});
 const copyStatus = ref("COPY STATE");
@@ -159,7 +159,7 @@ onMounted(async () => {
             renderSize.value = `${stats.width}×${stats.height}`;
             renderScale.value = stats.renderBudgetScale;
             travelTime.value = stats.travelTime;
-            ambientTime.value = stats.ambientTime;
+            windTime.value = stats.windTime;
             travelRunning.value = stats.travelRunning;
             authoringValues.value = Object.fromEntries(
                 AUTHORING_CONTROLS.map(({ key }) => [key, stats.mood[key]]),
@@ -236,7 +236,9 @@ onBeforeUnmount(() => {
                 >
                     <div class="panel-head">
                         <span>MOOD LAB / RESOLVED WORLD</span>
-                        <span>A {{ ambientTime.toFixed(1) }}s</span>
+                        <span>
+                            W {{ windTime.toFixed(1) }}
+                        </span>
                     </div>
 
                     <label

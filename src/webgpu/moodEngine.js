@@ -12,7 +12,6 @@ const BASE_WORLD = Object.freeze({
     contrast: 1,
     trainEmphasis: 0,
     bridgeEmphasis: 0,
-    ambientDrift: 1,
 });
 
 const DEFAULT_TRANSITION = Object.freeze({
@@ -35,7 +34,6 @@ const PROPERTY_GROUP = Object.freeze({
     smokeAmount: "motion",
     fogDensity: "atmosphere",
     contrast: "atmosphere",
-    ambientDrift: "atmosphere",
     trainEmphasis: "subject",
     bridgeEmphasis: "subject",
 });
@@ -44,15 +42,14 @@ export const AUTHORING_CONTROLS = Object.freeze([
     { key: "exposure", label: "Exposure", min: 0.35, max: 1.3, step: 0.01 },
     { key: "cloudCoverage", label: "Cloud coverage", min: -0.2, max: 0.28, step: 0.005 },
     { key: "cloudHeight", label: "Cloud height", min: -0.12, max: 0.12, step: 0.005 },
-    { key: "cloudScale", label: "Cloud scale", min: 0.6, max: 1.5, step: 0.01 },
+    { key: "cloudScale", label: "Cloud feature size", min: 0.6, max: 1.5, step: 0.01 },
     { key: "turbulence", label: "Turbulence", min: 0.45, max: 1.6, step: 0.01 },
-    { key: "windSpeed", label: "Wind", min: 0.15, max: 2, step: 0.01 },
+    { key: "windSpeed", label: "Wind speed", min: 0, max: 2.5, step: 0.01 },
     { key: "smokeAmount", label: "Smoke", min: 0, max: 1.5, step: 0.01 },
     { key: "fogDensity", label: "Fog", min: 0, max: 0.75, step: 0.01 },
     { key: "contrast", label: "Contrast", min: 0.6, max: 1.4, step: 0.01 },
     { key: "trainEmphasis", label: "Train emphasis", min: 0, max: 1, step: 0.01 },
-    { key: "bridgeEmphasis", label: "Bridge emphasis", min: -0.5, max: 0.5, step: 0.01 },
-    { key: "ambientDrift", label: "Ambient drift", min: 0.1, max: 1.8, step: 0.01 },
+    { key: "bridgeEmphasis", label: "Bridge lights", min: 0, max: 1, step: 0.01 },
 ]);
 
 const AUTHORABLE_KEYS = new Set(AUTHORING_CONTROLS.map(({ key }) => key));
@@ -89,8 +86,7 @@ export const MOODS = Object.freeze([
             fogDensity: 0.04,
             contrast: 1.14,
             trainEmphasis: 0.42,
-            bridgeEmphasis: 0.16,
-            ambientDrift: 1.25,
+            bridgeEmphasis: 0.28,
         },
     ),
     mood(
@@ -109,8 +105,7 @@ export const MOODS = Object.freeze([
             fogDensity: 0.26,
             contrast: 0.88,
             trainEmphasis: 0.7,
-            bridgeEmphasis: -0.14,
-            ambientDrift: 0.7,
+            bridgeEmphasis: 0.45,
         },
     ),
     mood(
@@ -129,8 +124,7 @@ export const MOODS = Object.freeze([
             fogDensity: 0.1,
             contrast: 0.94,
             trainEmphasis: 0.48,
-            bridgeEmphasis: -0.08,
-            ambientDrift: 0.62,
+            bridgeEmphasis: 0.2,
         },
     ),
     mood(
@@ -149,8 +143,7 @@ export const MOODS = Object.freeze([
             fogDensity: 0.48,
             contrast: 1.08,
             trainEmphasis: 0.82,
-            bridgeEmphasis: 0.28,
-            ambientDrift: 1.5,
+            bridgeEmphasis: 0.55,
         },
         {
             color: { duration: 6.5, easing: "smooth" },
@@ -174,8 +167,7 @@ export const MOODS = Object.freeze([
             fogDensity: 0.38,
             contrast: 1.16,
             trainEmphasis: 1,
-            bridgeEmphasis: -0.24,
-            ambientDrift: 0.44,
+            bridgeEmphasis: 0.95,
         },
         {
             color: { duration: 8, easing: "smooth" },

@@ -1,13 +1,13 @@
 struct Uniforms {
   resolution: vec2f,
   travelTime: f32,
-  ambientTime: f32,
+  reservedTime: f32,
   moodLow: vec4f,
   moodHigh: vec4f,
   grade: vec4f,      // x mood intensity, y vignette, z feedback, w exposure
   atmosphere: vec4f, // x coverage, y cloud height, z cloud scale, w turbulence
   motion: vec4f,     // x wind, y smoke, z fog, w contrast
-  subject: vec4f,    // x train emphasis, y bridge emphasis, z ambient drift
+  subject: vec4f,    // x train emphasis, y bridge emphasis, z reserved, w wind phase
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -69,16 +69,23 @@ fn boxMask(uv: vec2f, x1: f32, x2: f32, y1: f32, y2: f32) -> f32 {
   return select(0.0, 1.0, uv.x > x1 && uv.x < x2 && uv.y > y1 && uv.y < y2);
 }
 
+fn cloudCoordinates(uv: vec2f, time: f32, distance: f32, offset: f32) -> vec2f {
+  // Scale the noise field isotropically around a stable screen-space anchor.
+  // This changes cloud feature size without stretching the composed image.
+  let scale = max(uniforms.atmosphere.z, 0.05);
+  let anchor = vec2f(0.5, 0.5);
+  return (uv - anchor) / scale + anchor + vec2f(time / distance + offset, 0.0);
+}
+
 fn foreground(uvIn: vec2f, t: f32) -> vec4f {
   var uv = uvIn;
-  uv.x = (uv.x - 0.5) * uniforms.atmosphere.z + 0.5;
   uv.y -= uniforms.atmosphere.y;
   uv.y -= 0.2;
 
   var midlevel = -0.1;
   var disp = 1.7;
   var dist = 1.0;
-  var uv2 = uv + vec2f(t / dist + 40.0, 0.0);
+  var uv2 = cloudCoordinates(uv, t, dist, 40.0);
   var h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x * 0.7;
   if (uv.y < h + midlevel - 0.12) { return vec4f(0.43, 0.32, 0.31, 1.0); }
   if (uv.y < h + midlevel - 0.08) { return vec4f(0.55, 0.42, 0.41, 1.0); }
@@ -88,7 +95,7 @@ fn foreground(uvIn: vec2f, t: f32) -> vec4f {
   midlevel = 0.05;
   disp = 1.7;
   dist = 2.0;
-  uv2 = uv + vec2f(t / dist + 38.0, 0.0);
+  uv2 = cloudCoordinates(uv, t, dist, 38.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x * 0.7;
   if (uv.y < h + midlevel - 0.10) { return vec4f(0.95, 0.66, 0.48, 1.0); }
   if (uv.y < h + midlevel - 0.04) { return vec4f(0.98, 0.76, 0.64, 1.0); }
@@ -99,12 +106,11 @@ fn foreground(uvIn: vec2f, t: f32) -> vec4f {
 
 fn background(uvIn: vec2f, t: f32) -> vec4f {
   var uv = uvIn;
-  uv.x = (uv.x - 0.5) * uniforms.atmosphere.z + 0.5;
   uv.y -= uniforms.atmosphere.y;
   var midlevel = 0.3;
   var disp = 0.9;
   var dist = 10.0;
-  var uv2 = uv + vec2f(t / dist + 32.5, 0.0);
+  var uv2 = cloudCoordinates(uv, t, dist, 32.5);
   var h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
   if (uv.y < h + midlevel - 0.14) { return vec4f(0.48, 0.19, 0.20, 1.0); }
   if (uv.y < h + midlevel - 0.10) { return vec4f(0.68, 0.28, 0.19, 1.0); }
@@ -114,7 +120,7 @@ fn background(uvIn: vec2f, t: f32) -> vec4f {
   midlevel = 0.35;
   disp = 1.0;
   dist = 15.0;
-  uv2 = uv + vec2f(t / dist + 30.0, 0.0);
+  uv2 = cloudCoordinates(uv, t, dist, 30.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
   if (uv.y < h + midlevel - 0.04) { return vec4f(0.98, 0.76, 0.64, 1.0); }
   if (uv.y < h + midlevel)        { return vec4f(0.95, 0.80, 0.77, 1.0); }
@@ -122,7 +128,7 @@ fn background(uvIn: vec2f, t: f32) -> vec4f {
   midlevel = 0.35;
   disp = 3.5;
   dist = 20.0;
-  uv2 = uv + vec2f(t / dist + 27.5, 0.0);
+  uv2 = cloudCoordinates(uv, t, dist, 27.5);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
   if (uv.y < h + midlevel - 0.12) { return vec4f(0.43, 0.32, 0.31, 1.0); }
   if (uv.y < h + midlevel - 0.08) { return vec4f(0.55, 0.42, 0.41, 1.0); }
@@ -132,7 +138,7 @@ fn background(uvIn: vec2f, t: f32) -> vec4f {
   midlevel = 0.45;
   disp = 2.0;
   dist = 25.0;
-  uv2 = uv + vec2f(t / dist + 23.0, 0.0);
+  uv2 = cloudCoordinates(uv, t, dist, 23.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
   if (uv.y < h + midlevel - 0.04) { return vec4f(0.98, 0.57, 0.36, 1.0); }
   if (uv.y < h + midlevel)        { return vec4f(1.00, 0.62, 0.44, 1.0); }
@@ -140,7 +146,7 @@ fn background(uvIn: vec2f, t: f32) -> vec4f {
   midlevel = 0.5;
   disp = 2.3;
   dist = 30.0;
-  uv2 = uv + vec2f(t / dist + 20.5, 0.0);
+  uv2 = cloudCoordinates(uv, t, dist, 20.5);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
   if (uv.y < h + midlevel - 0.12) { return vec4f(0.41, 0.27, 0.27, 1.0); }
   if (uv.y < h + midlevel - 0.08) { return vec4f(0.53, 0.35, 0.32, 1.0); }
@@ -150,7 +156,7 @@ fn background(uvIn: vec2f, t: f32) -> vec4f {
   midlevel = 0.5;
   disp = 2.5;
   dist = 35.0;
-  uv2 = uv + vec2f(t / dist + 18.0, 0.0);
+  uv2 = cloudCoordinates(uv, t, dist, 18.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
   if (uv.y < h + midlevel - 0.10) { return vec4f(0.88, 0.38, 0.24, 1.0); }
   if (uv.y < h + midlevel - 0.05) { return vec4f(0.98, 0.42, 0.28, 1.0); }
@@ -159,7 +165,7 @@ fn background(uvIn: vec2f, t: f32) -> vec4f {
   midlevel = 0.6;
   disp = 2.0;
   dist = 40.0;
-  uv2 = uv + vec2f(t / dist + 18.0, 0.0);
+  uv2 = cloudCoordinates(uv, t, dist, 18.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
   if (uv.y < h + midlevel - 0.10) { return vec4f(0.95, 0.66, 0.48, 1.0); }
   if (uv.y < h + midlevel)        { return vec4f(1.00, 0.76, 0.60, 1.0); }
@@ -167,7 +173,7 @@ fn background(uvIn: vec2f, t: f32) -> vec4f {
   midlevel = 0.75;
   disp = 3.5;
   dist = 45.0;
-  uv2 = uv + vec2f(t / dist + 15.5, 0.0);
+  uv2 = cloudCoordinates(uv, t, dist, 15.5);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
   if (uv.y < h + midlevel - 0.20) { return vec4f(1.00, 0.55, 0.33, 1.0); }
   if (uv.y < h + midlevel - 0.15) { return vec4f(0.98, 0.50, 0.24, 1.0); }
@@ -177,7 +183,7 @@ fn background(uvIn: vec2f, t: f32) -> vec4f {
   midlevel = 0.7;
   disp = 2.7;
   dist = 50.0;
-  uv2 = uv + vec2f(t / dist + 12.0, 0.0);
+  uv2 = cloudCoordinates(uv, t, dist, 12.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
   if (uv.y < h + midlevel - 0.04) { return vec4f(0.73, 0.36, 0.30, 1.0); }
   if (uv.y < h + midlevel)        { return vec4f(0.80, 0.40, 0.34, 1.0); }
@@ -185,7 +191,7 @@ fn background(uvIn: vec2f, t: f32) -> vec4f {
   midlevel = 0.8;
   disp = 2.7;
   dist = 60.0;
-  uv2 = uv + vec2f(t / dist + 9.5, 0.0);
+  uv2 = cloudCoordinates(uv, t, dist, 9.5);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
   if (uv.y < h + midlevel - 0.10) { return vec4f(0.93, 0.58, 0.35, 1.0); }
   if (uv.y < h + midlevel)        { return vec4f(1.00, 0.76, 0.60, 1.0); }
@@ -193,7 +199,7 @@ fn background(uvIn: vec2f, t: f32) -> vec4f {
   midlevel = 0.9;
   disp = 3.0;
   dist = 70.0;
-  uv2 = uv + vec2f(t / dist + 7.0, 0.0);
+  uv2 = cloudCoordinates(uv, t, dist, 7.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
   if (uv.y < h + midlevel - 0.10) { return vec4f(0.56, 0.25, 0.22, 1.0); }
   if (uv.y < h + midlevel - 0.05) { return vec4f(0.60, 0.30, 0.27, 1.0); }
@@ -202,7 +208,7 @@ fn background(uvIn: vec2f, t: f32) -> vec4f {
   midlevel = 1.0;
   disp = 5.0;
   dist = 100.0;
-  uv2 = uv + vec2f(t / dist + 3.5, 0.0);
+  uv2 = cloudCoordinates(uv, t, dist, 3.5);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
   if (uv.y < h + midlevel - 0.10) { return vec4f(0.92, 0.85, 0.82, 1.0); }
   if (uv.y < h + midlevel)        { return vec4f(1.00, 0.94, 0.91, 1.0); }
@@ -217,8 +223,8 @@ fn applyMoodPalette(colIn: vec3f, uv: vec2f) -> vec3f {
   }
 
   let luma = dot(colIn, vec3f(0.2126, 0.7152, 0.0722));
-  let drift = 0.06 * sin(uniforms.ambientTime * 0.55 + uv.x * 4.2 + uv.y * 2.1);
-  let paletteT = smoothstep(0.03, 0.98, clamp(luma + drift, 0.0, 1.0));
+  let paletteVariation = 0.035 * sin(uv.x * 4.2 + uv.y * 2.1);
+  let paletteT = smoothstep(0.03, 0.98, clamp(luma + paletteVariation, 0.0, 1.0));
   let palette = mix(uniforms.moodLow.rgb, uniforms.moodHigh.rgb, paletteT);
   let sourceChroma = colIn - vec3f(luma);
   let moodCol = palette * (0.48 + 0.72 * luma) + sourceChroma * 0.28;
@@ -229,10 +235,12 @@ fn applyMoodPalette(colIn: vec3f, uv: vec2f) -> vec3f {
 fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let fragCoord = vec2f(position.x, uniforms.resolution.y - position.y);
   var uv = fragCoord / uniforms.resolution.y;
-  // At normal travel speed these sum to the original shader's iTime * 4.
-  // When the train stops, the smaller ambient component keeps the world alive.
-  let t = uniforms.travelTime * 3.8 + uniforms.ambientTime * 0.2 * uniforms.subject.z * uniforms.motion.x;
-  let bg = background(uv, t);
+  // Each phase is accumulated by the renderer. Changing a rate affects future
+  // motion instead of multiplying absolute time and visibly scrubbing the scene.
+  // At neutral rates the weighted phases reproduce the original iTime * 4.
+  let travelT = uniforms.travelTime * 4.0;
+  let cloudT = uniforms.travelTime * 3.4 + uniforms.subject.w * 0.6;
+  let bg = background(uv, cloudT);
 
   var fg = vec4f(0.0);
   let n = 5;
@@ -240,7 +248,7 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
     var i = 0;
     loop {
       if (i >= n) { break; }
-      fg += foreground(uv, t + 4.0 * f32(i) / f32(n) / 60.0) / f32(n);
+      fg += foreground(uv, cloudT + 4.0 * f32(i) / f32(n) / 60.0) / f32(n);
       i += 1;
     }
   }
@@ -292,9 +300,65 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   col = mix(col, trainDark, locoRoof);
   col = mix(col, trainDark, chem2 + wheel);
 
+  let headlightOrigin = vec2f(0.499, 0.113);
+  let headlightHousing = boxMask(uv, 0.496, 0.501, 0.1108, 0.1152);
+  let headlightInset = boxMask(uv, 0.4973, 0.5002, 0.112, 0.114);
+  col = mix(col, trainDark * 0.62, headlightHousing);
+  col = mix(col, vec3f(0.24, 0.12, 0.08), headlightInset);
+
+  // Use each wagon's local coordinates so its window has equal padding and
+  // sits between the two wheels instead of following a global screen repeat.
+  let windowLocalX = min(
+    abs(uv2.x - 0.32),
+    min(abs(uv2.x - 0.5), abs(uv2.x - 0.68))
+  );
+  let windowDistance = length(vec2f(windowLocalX / 9.0, uv.y - 0.109));
+  let carriageRegion = (1.0 - step(0.44, uv.x)) * step(0.103, uv.y) * (1.0 - step(0.115, uv.y));
+  let wheelOcclusion = 1.0 - clamp(wheel, 0.0, 1.0);
+  let windowFrame = carriageRegion * wheelOcclusion *
+    (1.0 - step(0.043, windowLocalX)) * step(0.105, uv.y) * (1.0 - step(0.113, uv.y));
+  col = mix(col, trainDark * 0.58, windowFrame);
+  let windowCore = windowFrame *
+    (1.0 - step(0.03, windowLocalX)) * step(0.106, uv.y) * (1.0 - step(0.112, uv.y));
+  let windowBloom = carriageRegion * wheelOcclusion * exp(-windowDistance * 310.0);
+
+  let driverWindowFrame = boxMask(uv, 0.4585, 0.4675, 0.1108, 0.116);
+  let driverWindowCore = boxMask(uv, 0.4602, 0.4658, 0.112, 0.1148);
+  let driverWindowDistance = length(uv - vec2f(0.463, 0.1134));
+  let driverWindowBloom = exp(-driverWindowDistance * 320.0) *
+    boxMask(uv, 0.454, 0.472, 0.106, 0.119);
+  col = mix(col, trainDark * 0.58, driverWindowFrame);
+
+  let roofEdgeRegion = (1.0 - step(0.44, uv.x)) *
+    step(0.09, uv2.x) * (1.0 - step(0.91, uv2.x));
+  let roofEdgeCore = roofEdgeRegion *
+    (1.0 - smoothstep(0.00035, 0.0011, abs(uv.y - 0.1162)));
+  let roofEdgeBloom = roofEdgeRegion * exp(-abs(uv.y - 0.1162) * 620.0);
+
+  let headlightDistance = length(uv - headlightOrigin);
+  let headlightCore = wheelOcclusion * (1.0 - smoothstep(0.0015, 0.0032, headlightDistance));
+  let headlightBloom = wheelOcclusion * exp(-headlightDistance * 150.0);
+
+  // A low, widening cone makes the headlight read through atmospheric haze,
+  // while the small circular source keeps it attached to the locomotive.
+  let beamX = max(uv.x - headlightOrigin.x, 0.0);
+  let beamWidth = 0.0035 + beamX * 0.16;
+  let beamCenterY = headlightOrigin.y - beamX * 0.018;
+  let beamShape = 1.0 - smoothstep(beamWidth * 0.58, beamWidth, abs(uv.y - beamCenterY));
+  let beamStart = smoothstep(0.001, 0.012, beamX);
+  let beamEnd = 1.0 - smoothstep(0.12, 0.24, beamX);
+  let beamNoise = 0.76 + 0.24 * fbm2(vec2f(uv.x * 5.0 - uniforms.subject.w * 0.025, uv.y * 12.0), 4);
+  let headlightBeam = beamShape * beamStart * beamEnd * beamNoise;
+  let trainEmission = clamp(trainLift, 0.0, 1.0) * (
+    windowCore * 1.05 + windowBloom * 0.45 +
+    driverWindowCore * 1.05 + driverWindowBloom * 0.38 +
+    roofEdgeCore * 0.62 + roofEdgeBloom * 0.14
+  );
+
   var dist = 5.0;
-  uv2 = uv + vec2f(t / dist + 3.5, 0.0);
-  uv2.x -= t / dist * 0.2;
+  let smokeT = uniforms.travelTime * 3.8 + uniforms.subject.w * 0.2;
+  uv2 = uv + vec2f(smokeT / dist + 3.5, 0.0);
+  uv2.x -= smokeT / dist * 0.2;
   let smokeAmount = clamp(uniforms.motion.y, 0.0, 1.5);
   let h = fbm2(uv2, 8) - (0.65 - smokeAmount * 0.1);
 
@@ -305,9 +369,16 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
     if (y < -0.02) { col = vec3f(0.92, 0.85, 0.82); }
   }
 
+  // The cone is atmospheric light and belongs inside the scene. The round
+  // practical lamp is emitted after grading with explicit scene occlusion.
+  col += vec3f(1.0, 0.52, 0.18) * headlightBeam * clamp(trainLift, 0.0, 1.0) * 0.42;
+
   dist = 5.0;
-  uv2 = uv + vec2f(t / dist + 32.5, 0.0);
+  uv2 = uv + vec2f(travelT / dist + 32.5, 0.0);
   uv2.x = fract(uv2.x * 3.0);
+
+  let bridgeLift = clamp(uniforms.subject.y, 0.0, 1.0);
+  let bridgeDeckY = pow(uv2.x - 0.5, 2.0) * 0.15 + 0.12;
 
   var k = 1.0;
   k *= smoothstep(0.001, 0.003, abs(uv2.y - pow(uv2.x - 0.5, 2.0) * 0.15 - 0.12));
@@ -320,7 +391,22 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
     step(-0.1, -uv2.y),
     1.0
   );
-  let bridgeBase = vec3f(0.29, 0.09, 0.08) * (1.0 + uniforms.subject.y * 0.3);
+  let bridgeSurface = 1.0 - clamp(k, 0.0, 1.0);
+  let pillarDistance = min(uv2.x, 1.0 - uv2.x);
+  let pillarVertical = (1.0 - smoothstep(0.012, 0.027, pillarDistance)) *
+    smoothstep(0.102, 0.116, uv.y) * (1.0 - smoothstep(0.164, 0.178, uv.y));
+  let pillarCapDistance = length(vec2f(pillarDistance / 1.4, uv.y - 0.169));
+  let pillarCap = 1.0 - smoothstep(0.003, 0.007, pillarCapDistance);
+  let cornerReach = 1.0 - smoothstep(0.1, 0.23, pillarDistance);
+  let undersideCorner = (1.0 - smoothstep(0.001, 0.0032, abs(uv.y - (bridgeDeckY - 0.004)))) * cornerReach;
+  let cornerBloom = exp(-abs(uv.y - (bridgeDeckY - 0.004)) * 190.0) * cornerReach;
+  let bridgeEmission = bridgeLift * (
+    pillarVertical * bridgeSurface * 0.7 +
+    pillarCap * bridgeSurface * 1.05 +
+    undersideCorner * bridgeSurface * 0.62 +
+    cornerBloom * 0.16
+  );
+  let bridgeBase = vec3f(0.29, 0.09, 0.08) * (1.0 + bridgeLift * 0.3);
   col = mix(bridgeBase * smoothstep(-0.08, 0.08, uv.y), col, k);
 
   col = mix(col, fg.rgb, fg.a);
@@ -333,6 +419,16 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   col = (col - vec3f(0.5)) * uniforms.motion.w + vec3f(0.5);
   col *= uniforms.grade.w;
   col = applyMoodPalette(col, moodUv);
+  // Emission is added after atmospheric grading so practical lights remain
+  // luminous in dark moods. Soft analytic falloff provides bloom without a
+  // separate full-resolution blur pass.
+  let practicalLightColor = vec3f(1.0, 0.52, 0.18);
+  let trainLightVisibility = clamp(k * (1.0 - fg.a), 0.0, 1.0);
+  let headlightEmission = clamp(trainLift, 0.0, 1.0) *
+    (headlightCore * 1.25 + headlightBloom * 0.82) * trainLightVisibility;
+  col += practicalLightColor * trainEmission * trainLightVisibility;
+  col += practicalLightColor * headlightEmission;
+  col += practicalLightColor * bridgeEmission;
 
   // Shadertoy Buffer A feedback. Because WebGPU render-target textures use a
   // top-left texture origin, flip the Shadertoy-style Y coordinate back when
