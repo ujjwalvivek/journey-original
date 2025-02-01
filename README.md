@@ -2,7 +2,9 @@
 
 ![Showcase](media/showcase.gif)
 
-The default visual state keeps the reconstructed Shadertoy pipeline intact:
+The renderer keeps the reconstructed Shadertoy pipeline intact while the public
+default is now an authored **Departure** scene. A hidden neutral shader base is
+used only as a development reference and as the zero-intensity blend target.
 
 - **Buffer A iChannel0:** the exact source texture's sampled red channel, losslessly stored as a 1024×1024 grayscale PNG, **Linear + Repeat + VFlip ON**.
 - **Buffer A iChannel1:** the previous Buffer A frame, **Linear + Clamp + VFlip OFF**, using true ping-pong render targets.
@@ -15,9 +17,10 @@ The default visual state keeps the reconstructed Shadertoy pipeline intact:
 
 - Start / stop the train journey (freezes the Shadertoy scene clock without stopping the renderer).
 - Travel speed from 0.10× to 2.50×.
-- Authored environmental moods: Original, Ember, Blue Hour, Sakura, Monsoon, Night Rail.
-- Auto-cycle moods with animated transitions.
-- Mood intensity across palette and world structure.
+- Authored environmental moods: Departure, Ember, Blue Hour, Sakura, Monsoon, Night Rail.
+- Auto-cycle moods with animated, property-group transitions.
+- Mood intensity across world structure and explicit scene palettes for sky,
+  clouds, smoke, train materials, bridge, fog, and practical lights.
 - A Mood Lab for live structural authoring and JSON snapshot export.
 - Temporal feedback amount.
 - Vignette strength.

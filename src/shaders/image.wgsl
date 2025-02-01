@@ -8,6 +8,19 @@ struct Uniforms {
   atmosphere: vec4f,
   motion: vec4f,
   subject: vec4f,
+  sceneSky: vec4f,
+  cloudShadow: vec4f,
+  cloudMid: vec4f,
+  cloudWarm: vec4f,
+  cloudLight: vec4f,
+  smokeLight: vec4f,
+  smokeShadow: vec4f,
+  trainDarkColor: vec4f,
+  trainBodyColor: vec4f,
+  locomotiveColor: vec4f,
+  bridgeColor: vec4f,
+  practicalLightColor: vec4f,
+  fogColor: vec4f,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;

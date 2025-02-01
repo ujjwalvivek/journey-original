@@ -1,7 +1,11 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { JourneyRenderer } from "./webgpu/renderer.js";
-import { AUTHORING_CONTROLS, MOODS } from "./webgpu/moodEngine.js";
+import {
+    AUTHORING_COLORS,
+    AUTHORING_CONTROLS,
+    MOODS,
+} from "./webgpu/moodEngine.js";
 
 const canvas = ref(null);
 const state = ref("loading");
@@ -9,8 +13,8 @@ const message = ref("Starting WebGPU…");
 const hudVisible = ref(true);
 const travelRunning = ref(true);
 const travelSpeed = ref(1);
-const moodId = ref("original");
-const moodIntensity = ref(0);
+const moodId = ref("departure");
+const moodIntensity = ref(1);
 const autoMood = ref(false);
 const cycleSeconds = ref(14);
 const feedbackAmount = ref(0.3);
@@ -22,6 +26,7 @@ const travelTime = ref(0);
 const windTime = ref(0);
 const authoringVisible = ref(false);
 const authoringValues = ref({});
+const authoringColors = ref({});
 const copyStatus = ref("COPY STATE");
 
 let renderer = null;
@@ -67,6 +72,28 @@ function overrideMood(key, value) {
     renderer?.setMoodOverride(key, value);
 }
 
+function colorToHex(color) {
+    if (!Array.isArray(color)) return "#000000";
+    return `#${color
+        .map((channel) =>
+            Math.round(Math.max(0, Math.min(1, channel)) * 255)
+                .toString(16)
+                .padStart(2, "0"),
+        )
+        .join("")}`;
+}
+
+function hexToColor(hex) {
+    const value = hex.replace("#", "");
+    return [0, 2, 4].map((offset) =>
+        Number.parseInt(value.slice(offset, offset + 2), 16) / 255,
+    );
+}
+
+function overrideMoodColor(key, value) {
+    renderer?.setMoodOverride(key, hexToColor(value));
+}
+
 function clearMoodOverrides() {
     renderer?.clearMoodOverrides();
 }
@@ -78,6 +105,14 @@ async function copyMoodState() {
         id: mood.id,
         low: mood.low.map((value) => Number(value.toFixed(4))),
         high: mood.high.map((value) => Number(value.toFixed(4))),
+        colors: Object.fromEntries(
+            AUTHORING_COLORS.filter(({ key }) => key !== "low" && key !== "high").map(
+                ({ key }) => [
+                    key,
+                    mood[key].map((value) => Number(value.toFixed(4))),
+                ],
+            ),
+        ),
         world: Object.fromEntries(
             AUTHORING_CONTROLS.map(({ key }) => [
                 key,
@@ -163,6 +198,12 @@ onMounted(async () => {
             travelRunning.value = stats.travelRunning;
             authoringValues.value = Object.fromEntries(
                 AUTHORING_CONTROLS.map(({ key }) => [key, stats.mood[key]]),
+            );
+            authoringColors.value = Object.fromEntries(
+                AUTHORING_COLORS.map(({ key }) => [
+                    key,
+                    colorToHex(stats.mood[key]),
+                ]),
             );
             if (autoMood.value && stats.moodId !== moodId.value)
                 moodId.value = stats.moodId;
@@ -260,6 +301,21 @@ onBeforeUnmount(() => {
                         />
                     </label>
 
+                    <div class="color-grid" aria-label="Authored scene colors">
+                        <label
+                            v-for="color in AUTHORING_COLORS"
+                            :key="color.key"
+                            class="color-row"
+                        >
+                            <span>{{ color.label }}</span>
+                            <input
+                                v-model="authoringColors[color.key]"
+                                type="color"
+                                @input="overrideMoodColor(color.key, authoringColors[color.key])"
+                            />
+                        </label>
+                    </div>
+
                     <div class="button-row">
                         <button type="button" @click="clearMoodOverrides">
                             CLEAR OVERRIDES
@@ -340,7 +396,7 @@ onBeforeUnmount(() => {
 
                         <div class="mood-line">
                             <label>
-                                <span>Palette</span>
+                                <span>Scene</span>
                                 <select v-model="moodId">
                                     <option
                                         v-for="mood in MOODS"
@@ -361,7 +417,7 @@ onBeforeUnmount(() => {
 
                         <label class="range-row">
                             <span
-                                >Mood intensity
+                                >Scene intensity
                                 <output
                                     >{{
                                         Math.round(moodIntensity * 100)

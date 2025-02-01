@@ -1,18 +1,35 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MoodEngine } from "../src/webgpu/moodEngine.js";
+import {
+    AUTHORING_COLORS,
+    MOODS,
+    MoodEngine,
+} from "../src/webgpu/moodEngine.js";
 
-test("original mood is a neutral baseline at every intensity", () => {
+test("every authored scene resolves a complete RGB scene palette", () => {
+    for (const mood of MOODS) {
+        for (const { key } of AUTHORING_COLORS) {
+            const color = key === "low" || key === "high"
+                ? mood[key]
+                : mood.colors[key];
+            assert.equal(color.length, 3, `${mood.id}.${key}`);
+            assert.equal(color.every((channel) => channel >= 0 && channel <= 1), true);
+        }
+    }
+});
+
+test("departure is authored while zero intensity reveals the hidden shader base", () => {
     const engine = new MoodEngine(0);
+    const departure = engine.update(20);
+    engine.setIntensity(0);
     const neutral = engine.update(20);
-    engine.setIntensity(1);
-    const full = engine.update(20);
 
-    assert.deepEqual(full.low, neutral.low);
-    assert.deepEqual(full.high, neutral.high);
-    assert.equal(full.cloudCoverage, 0);
-    assert.equal(full.windSpeed, 1);
-    assert.equal(full.fogDensity, 0);
+    assert.equal(departure.id, "departure");
+    assert.equal(departure.cloudCoverage, -0.025);
+    assert.deepEqual(departure.skyColor, [0.53, 0.61, 0.76]);
+    assert.equal(neutral.cloudCoverage, 0);
+    assert.deepEqual(neutral.skyColor, [0.58, 0.7, 1]);
+    assert.equal(MOODS.some(({ id }) => id === "shader-base"), false);
 });
 
 test("mood intensity blends both palette and world structure", () => {
@@ -54,7 +71,10 @@ test("authoring overrides are clamped and can be cleared", () => {
     assert.equal(engine.setOverride("fogDensity", 99), true);
     assert.equal(engine.setOverride("notAWorldProperty", 1), false);
     assert.equal(engine.update(0).fogDensity, 0.75);
+    assert.equal(engine.setOverride("practicalLightColor", [2, 0.4, -1]), true);
+    assert.deepEqual(engine.update(0).practicalLightColor, [1, 0.4, 0]);
 
     engine.clearOverrides();
-    assert.equal(engine.update(0).fogDensity, 0);
+    assert.equal(engine.update(0).fogDensity, 0.08);
+    assert.deepEqual(engine.update(0).practicalLightColor, [1, 0.55, 0.2]);
 });

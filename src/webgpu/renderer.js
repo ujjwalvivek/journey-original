@@ -7,7 +7,7 @@ import { fitRenderSize } from "./renderBudget.js";
 import { EnvironmentClock } from "./environmentClock.js";
 
 const BUFFER_FORMAT = "rgba16float";
-const UNIFORM_FLOATS = 28;
+const UNIFORM_FLOATS = 80;
 const UNIFORM_BYTES = UNIFORM_FLOATS * 4;
 
 export class JourneyRenderer {
@@ -377,6 +377,13 @@ export class JourneyRenderer {
     writeUniforms(mood) {
         this.resolvedMood = mood;
 
+        const writeColor = (offset, color) => {
+            this.uniformData[offset] = color[0];
+            this.uniformData[offset + 1] = color[1];
+            this.uniformData[offset + 2] = color[2];
+            this.uniformData[offset + 3] = 1;
+        };
+
         this.uniformData[0] = this.canvas.width;
         this.uniformData[1] = this.canvas.height;
         this.uniformData[2] = this.clock.travelTime;
@@ -411,6 +418,20 @@ export class JourneyRenderer {
         this.uniformData[25] = mood.bridgeEmphasis;
         this.uniformData[26] = 0;
         this.uniformData[27] = this.clock.windPhase;
+
+        writeColor(28, mood.skyColor);
+        writeColor(32, mood.cloudShadow);
+        writeColor(36, mood.cloudMid);
+        writeColor(40, mood.cloudWarm);
+        writeColor(44, mood.cloudLight);
+        writeColor(48, mood.smokeLight);
+        writeColor(52, mood.smokeShadow);
+        writeColor(56, mood.trainDarkColor);
+        writeColor(60, mood.trainBodyColor);
+        writeColor(64, mood.locomotiveColor);
+        writeColor(68, mood.bridgeColor);
+        writeColor(72, mood.practicalLightColor);
+        writeColor(76, mood.fogColor);
 
         this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
     }

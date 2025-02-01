@@ -8,6 +8,19 @@ struct Uniforms {
   atmosphere: vec4f, // x coverage, y cloud height, z cloud scale, w turbulence
   motion: vec4f,     // x wind, y smoke, z fog, w contrast
   subject: vec4f,    // x train emphasis, y bridge emphasis, z reserved, w wind phase
+  sceneSky: vec4f,
+  cloudShadow: vec4f,
+  cloudMid: vec4f,
+  cloudWarm: vec4f,
+  cloudLight: vec4f,
+  smokeLight: vec4f,
+  smokeShadow: vec4f,
+  trainDarkColor: vec4f,
+  trainBodyColor: vec4f,
+  locomotiveColor: vec4f,
+  bridgeColor: vec4f,
+  practicalLightColor: vec4f,
+  fogColor: vec4f,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -77,6 +90,21 @@ fn cloudCoordinates(uv: vec2f, time: f32, distance: f32, offset: f32) -> vec2f {
   return (uv - anchor) / scale + anchor + vec2f(time / distance + offset, 0.0);
 }
 
+fn cloudTone(tIn: f32) -> vec3f {
+  let t = clamp(tIn, 0.0, 1.0);
+  if (t < 0.3333) {
+    return mix(uniforms.cloudShadow.rgb, uniforms.cloudMid.rgb, t * 3.0);
+  }
+  if (t < 0.6667) {
+    return mix(uniforms.cloudMid.rgb, uniforms.cloudWarm.rgb, (t - 0.3333) * 3.0);
+  }
+  return mix(uniforms.cloudWarm.rgb, uniforms.cloudLight.rgb, (t - 0.6667) * 3.0);
+}
+
+fn cloudLayer(t: f32, alpha: f32) -> vec4f {
+  return vec4f(cloudTone(t), alpha);
+}
+
 fn foreground(uvIn: vec2f, t: f32) -> vec4f {
   var uv = uvIn;
   uv.y -= uniforms.atmosphere.y;
@@ -87,21 +115,21 @@ fn foreground(uvIn: vec2f, t: f32) -> vec4f {
   var dist = 1.0;
   var uv2 = cloudCoordinates(uv, t, dist, 40.0);
   var h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x * 0.7;
-  if (uv.y < h + midlevel - 0.12) { return vec4f(0.43, 0.32, 0.31, 1.0); }
-  if (uv.y < h + midlevel - 0.08) { return vec4f(0.55, 0.42, 0.41, 1.0); }
-  if (uv.y < h + midlevel - 0.04) { return vec4f(0.66, 0.42, 0.40, 1.0); }
-  if (uv.y < h + midlevel)        { return vec4f(0.77, 0.48, 0.46, 1.0); }
+  if (uv.y < h + midlevel - 0.12) { return cloudLayer(0.04, 1.0); }
+  if (uv.y < h + midlevel - 0.08) { return cloudLayer(0.14, 1.0); }
+  if (uv.y < h + midlevel - 0.04) { return cloudLayer(0.24, 1.0); }
+  if (uv.y < h + midlevel)        { return cloudLayer(0.34, 1.0); }
 
   midlevel = 0.05;
   disp = 1.7;
   dist = 2.0;
   uv2 = cloudCoordinates(uv, t, dist, 38.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x * 0.7;
-  if (uv.y < h + midlevel - 0.10) { return vec4f(0.95, 0.66, 0.48, 1.0); }
-  if (uv.y < h + midlevel - 0.04) { return vec4f(0.98, 0.76, 0.64, 1.0); }
-  if (uv.y < h + midlevel)        { return vec4f(0.95, 0.80, 0.77, 1.0); }
+  if (uv.y < h + midlevel - 0.10) { return cloudLayer(0.7, 1.0); }
+  if (uv.y < h + midlevel - 0.04) { return cloudLayer(0.86, 1.0); }
+  if (uv.y < h + midlevel)        { return cloudLayer(0.96, 1.0); }
 
-  return vec4f(0.95, 0.80, 0.77, 0.0);
+  return cloudLayer(0.96, 0.0);
 }
 
 fn background(uvIn: vec2f, t: f32) -> vec4f {
@@ -112,108 +140,108 @@ fn background(uvIn: vec2f, t: f32) -> vec4f {
   var dist = 10.0;
   var uv2 = cloudCoordinates(uv, t, dist, 32.5);
   var h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.14) { return vec4f(0.48, 0.19, 0.20, 1.0); }
-  if (uv.y < h + midlevel - 0.10) { return vec4f(0.68, 0.28, 0.19, 1.0); }
-  if (uv.y < h + midlevel - 0.07) { return vec4f(0.88, 0.38, 0.24, 1.0); }
-  if (uv.y < h + midlevel)        { return vec4f(0.95, 0.45, 0.30, 1.0); }
+  if (uv.y < h + midlevel - 0.14) { return cloudLayer(0.24, 1.0); }
+  if (uv.y < h + midlevel - 0.10) { return cloudLayer(0.42, 1.0); }
+  if (uv.y < h + midlevel - 0.07) { return cloudLayer(0.58, 1.0); }
+  if (uv.y < h + midlevel)        { return cloudLayer(0.68, 1.0); }
 
   midlevel = 0.35;
   disp = 1.0;
   dist = 15.0;
   uv2 = cloudCoordinates(uv, t, dist, 30.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.04) { return vec4f(0.98, 0.76, 0.64, 1.0); }
-  if (uv.y < h + midlevel)        { return vec4f(0.95, 0.80, 0.77, 1.0); }
+  if (uv.y < h + midlevel - 0.04) { return cloudLayer(0.86, 1.0); }
+  if (uv.y < h + midlevel)        { return cloudLayer(0.96, 1.0); }
 
   midlevel = 0.35;
   disp = 3.5;
   dist = 20.0;
   uv2 = cloudCoordinates(uv, t, dist, 27.5);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.12) { return vec4f(0.43, 0.32, 0.31, 1.0); }
-  if (uv.y < h + midlevel - 0.08) { return vec4f(0.55, 0.42, 0.41, 1.0); }
-  if (uv.y < h + midlevel - 0.04) { return vec4f(0.66, 0.42, 0.40, 1.0); }
-  if (uv.y < h + midlevel)        { return vec4f(0.77, 0.48, 0.46, 1.0); }
+  if (uv.y < h + midlevel - 0.12) { return cloudLayer(0.04, 1.0); }
+  if (uv.y < h + midlevel - 0.08) { return cloudLayer(0.14, 1.0); }
+  if (uv.y < h + midlevel - 0.04) { return cloudLayer(0.24, 1.0); }
+  if (uv.y < h + midlevel)        { return cloudLayer(0.34, 1.0); }
 
   midlevel = 0.45;
   disp = 2.0;
   dist = 25.0;
   uv2 = cloudCoordinates(uv, t, dist, 23.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.04) { return vec4f(0.98, 0.57, 0.36, 1.0); }
-  if (uv.y < h + midlevel)        { return vec4f(1.00, 0.62, 0.44, 1.0); }
+  if (uv.y < h + midlevel - 0.04) { return cloudLayer(0.68, 1.0); }
+  if (uv.y < h + midlevel)        { return cloudLayer(0.78, 1.0); }
 
   midlevel = 0.5;
   disp = 2.3;
   dist = 30.0;
   uv2 = cloudCoordinates(uv, t, dist, 20.5);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.12) { return vec4f(0.41, 0.27, 0.27, 1.0); }
-  if (uv.y < h + midlevel - 0.08) { return vec4f(0.53, 0.35, 0.32, 1.0); }
-  if (uv.y < h + midlevel - 0.04) { return vec4f(0.80, 0.24, 0.17, 1.0); }
-  if (uv.y < h + midlevel)        { return vec4f(0.99, 0.29, 0.20, 1.0); }
+  if (uv.y < h + midlevel - 0.12) { return cloudLayer(0.02, 1.0); }
+  if (uv.y < h + midlevel - 0.08) { return cloudLayer(0.12, 1.0); }
+  if (uv.y < h + midlevel - 0.04) { return cloudLayer(0.46, 1.0); }
+  if (uv.y < h + midlevel)        { return cloudLayer(0.62, 1.0); }
 
   midlevel = 0.5;
   disp = 2.5;
   dist = 35.0;
   uv2 = cloudCoordinates(uv, t, dist, 18.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.10) { return vec4f(0.88, 0.38, 0.24, 1.0); }
-  if (uv.y < h + midlevel - 0.05) { return vec4f(0.98, 0.42, 0.28, 1.0); }
-  if (uv.y < h + midlevel)        { return vec4f(1.00, 0.48, 0.35, 1.0); }
+  if (uv.y < h + midlevel - 0.10) { return cloudLayer(0.52, 1.0); }
+  if (uv.y < h + midlevel - 0.05) { return cloudLayer(0.64, 1.0); }
+  if (uv.y < h + midlevel)        { return cloudLayer(0.73, 1.0); }
 
   midlevel = 0.6;
   disp = 2.0;
   dist = 40.0;
   uv2 = cloudCoordinates(uv, t, dist, 18.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.10) { return vec4f(0.95, 0.66, 0.48, 1.0); }
-  if (uv.y < h + midlevel)        { return vec4f(1.00, 0.76, 0.60, 1.0); }
+  if (uv.y < h + midlevel - 0.10) { return cloudLayer(0.72, 1.0); }
+  if (uv.y < h + midlevel)        { return cloudLayer(0.84, 1.0); }
 
   midlevel = 0.75;
   disp = 3.5;
   dist = 45.0;
   uv2 = cloudCoordinates(uv, t, dist, 15.5);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.20) { return vec4f(1.00, 0.55, 0.33, 1.0); }
-  if (uv.y < h + midlevel - 0.15) { return vec4f(0.98, 0.50, 0.24, 1.0); }
-  if (uv.y < h + midlevel - 0.10) { return vec4f(0.90, 0.55, 0.40, 1.0); }
-  if (uv.y < h + midlevel)        { return vec4f(1.00, 0.62, 0.44, 1.0); }
+  if (uv.y < h + midlevel - 0.20) { return cloudLayer(0.7, 1.0); }
+  if (uv.y < h + midlevel - 0.15) { return cloudLayer(0.62, 1.0); }
+  if (uv.y < h + midlevel - 0.10) { return cloudLayer(0.58, 1.0); }
+  if (uv.y < h + midlevel)        { return cloudLayer(0.78, 1.0); }
 
   midlevel = 0.7;
   disp = 2.7;
   dist = 50.0;
   uv2 = cloudCoordinates(uv, t, dist, 12.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.04) { return vec4f(0.73, 0.36, 0.30, 1.0); }
-  if (uv.y < h + midlevel)        { return vec4f(0.80, 0.40, 0.34, 1.0); }
+  if (uv.y < h + midlevel - 0.04) { return cloudLayer(0.32, 1.0); }
+  if (uv.y < h + midlevel)        { return cloudLayer(0.42, 1.0); }
 
   midlevel = 0.8;
   disp = 2.7;
   dist = 60.0;
   uv2 = cloudCoordinates(uv, t, dist, 9.5);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.10) { return vec4f(0.93, 0.58, 0.35, 1.0); }
-  if (uv.y < h + midlevel)        { return vec4f(1.00, 0.76, 0.60, 1.0); }
+  if (uv.y < h + midlevel - 0.10) { return cloudLayer(0.66, 1.0); }
+  if (uv.y < h + midlevel)        { return cloudLayer(0.84, 1.0); }
 
   midlevel = 0.9;
   disp = 3.0;
   dist = 70.0;
   uv2 = cloudCoordinates(uv, t, dist, 7.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.10) { return vec4f(0.56, 0.25, 0.22, 1.0); }
-  if (uv.y < h + midlevel - 0.05) { return vec4f(0.60, 0.30, 0.27, 1.0); }
-  if (uv.y < h + midlevel)        { return vec4f(0.74, 0.35, 0.30, 1.0); }
+  if (uv.y < h + midlevel - 0.10) { return cloudLayer(0.14, 1.0); }
+  if (uv.y < h + midlevel - 0.05) { return cloudLayer(0.22, 1.0); }
+  if (uv.y < h + midlevel)        { return cloudLayer(0.34, 1.0); }
 
   midlevel = 1.0;
   disp = 5.0;
   dist = 100.0;
   uv2 = cloudCoordinates(uv, t, dist, 3.5);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.10) { return vec4f(0.92, 0.85, 0.82, 1.0); }
-  if (uv.y < h + midlevel)        { return vec4f(1.00, 0.94, 0.91, 1.0); }
+  if (uv.y < h + midlevel - 0.10) { return cloudLayer(0.9, 1.0); }
+  if (uv.y < h + midlevel)        { return cloudLayer(1.0, 1.0); }
 
-  return vec4f(0.58, 0.70, 1.00, 1.0);
+  return vec4f(uniforms.sceneSky.rgb, 1.0);
 }
 
 fn applyMoodPalette(colIn: vec3f, uv: vec2f) -> vec3f {
@@ -289,9 +317,9 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   }
 
   let trainLift = uniforms.subject.x;
-  let trainDark = mix(vec3f(0.18, 0.12, 0.15), uniforms.moodLow.rgb * 0.72, clamp(trainLift, 0.0, 1.0));
-  let trainBody = mix(vec3f(0.48, 0.19, 0.20), uniforms.moodHigh.rgb * 0.72, clamp(trainLift, 0.0, 1.0));
-  let locomotive = mix(vec3f(0.38, 0.19, 0.20), uniforms.moodHigh.rgb * 0.58, clamp(trainLift, 0.0, 1.0));
+  let trainDark = uniforms.trainDarkColor.rgb * (1.0 + clamp(trainLift, 0.0, 1.0) * 0.12);
+  let trainBody = uniforms.trainBodyColor.rgb * (1.0 + clamp(trainLift, 0.0, 1.0) * 0.1);
+  let locomotive = uniforms.locomotiveColor.rgb * (1.0 + clamp(trainLift, 0.0, 1.0) * 0.1);
   col = mix(col, trainDark, join);
   col = mix(col, trainBody, wagon);
   col = mix(col, trainDark, roof);
@@ -304,7 +332,7 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let headlightHousing = boxMask(uv, 0.496, 0.501, 0.1108, 0.1152);
   let headlightInset = boxMask(uv, 0.4973, 0.5002, 0.112, 0.114);
   col = mix(col, trainDark * 0.62, headlightHousing);
-  col = mix(col, vec3f(0.24, 0.12, 0.08), headlightInset);
+  col = mix(col, mix(trainDark, trainBody, 0.42), headlightInset);
 
   // Use each wagon's local coordinates so its window has equal padding and
   // sits between the two wheels instead of following a global screen repeat.
@@ -365,13 +393,13 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   if (uv.x < 0.49 && smokeAmount > 0.001) {
     let x = -uv.x + 0.49;
     let y = abs(uv.y + h * 0.4 - 0.16 * sqrt(x) - 0.12) - 0.8 * x * exp(-x * 10.0);
-    if (y < 0.0) { col = vec3f(1.00, 0.94, 0.91); }
-    if (y < -0.02) { col = vec3f(0.92, 0.85, 0.82); }
+    if (y < 0.0) { col = uniforms.smokeLight.rgb; }
+    if (y < -0.02) { col = uniforms.smokeShadow.rgb; }
   }
 
   // The cone is atmospheric light and belongs inside the scene. The round
   // practical lamp is emitted after grading with explicit scene occlusion.
-  col += vec3f(1.0, 0.52, 0.18) * headlightBeam * clamp(trainLift, 0.0, 1.0) * 0.42;
+  col += uniforms.practicalLightColor.rgb * headlightBeam * clamp(trainLift, 0.0, 1.0) * 0.42;
 
   dist = 5.0;
   uv2 = uv + vec2f(travelT / dist + 32.5, 0.0);
@@ -406,7 +434,7 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
     undersideCorner * bridgeSurface * 0.62 +
     cornerBloom * 0.16
   );
-  let bridgeBase = vec3f(0.29, 0.09, 0.08) * (1.0 + bridgeLift * 0.3);
+  let bridgeBase = uniforms.bridgeColor.rgb * (1.0 + bridgeLift * 0.3);
   col = mix(bridgeBase * smoothstep(-0.08, 0.08, uv.y), col, k);
 
   col = mix(col, fg.rgb, fg.a);
@@ -414,15 +442,14 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let moodUv = fragCoord / uniforms.resolution;
   let fogBand = 1.0 - smoothstep(0.05, 0.42, abs(uv.y - 0.1));
   let fogAmount = clamp(uniforms.motion.z * fogBand, 0.0, 0.78);
-  let fogColor = mix(uniforms.moodLow.rgb, uniforms.moodHigh.rgb, 0.58);
-  col = mix(col, fogColor, fogAmount);
+  col = mix(col, uniforms.fogColor.rgb, fogAmount);
   col = (col - vec3f(0.5)) * uniforms.motion.w + vec3f(0.5);
   col *= uniforms.grade.w;
   col = applyMoodPalette(col, moodUv);
   // Emission is added after atmospheric grading so practical lights remain
   // luminous in dark moods. Soft analytic falloff provides bloom without a
   // separate full-resolution blur pass.
-  let practicalLightColor = vec3f(1.0, 0.52, 0.18);
+  let practicalLightColor = uniforms.practicalLightColor.rgb;
   let trainLightVisibility = clamp(k * (1.0 - fg.a), 0.0, 1.0);
   let headlightEmission = clamp(trainLift, 0.0, 1.0) *
     (headlightCore * 1.25 + headlightBloom * 0.82) * trainLightVisibility;
