@@ -11,9 +11,11 @@ const canvas = ref(null);
 const state = ref("loading");
 const message = ref("Starting WebGPU…");
 const hudVisible = ref(true);
+const activePanel = ref(null);
 const travelRunning = ref(true);
 const travelSpeed = ref(1);
 const moodId = ref("departure");
+const sceneMenuOpen = ref(false);
 const moodIntensity = ref(1);
 const autoMood = ref(false);
 const cycleSeconds = ref(14);
@@ -24,7 +26,6 @@ const renderSize = ref("—");
 const renderScale = ref(1);
 const travelTime = ref(0);
 const windTime = ref(0);
-const authoringVisible = ref(false);
 const authoringValues = ref({});
 const authoringColors = ref({});
 const copyStatus = ref("COPY STATE");
@@ -37,6 +38,9 @@ const travelLabel = computed(() =>
 );
 const statusLabel = computed(() =>
     travelRunning.value ? "IN MOTION" : "HOLDING",
+);
+const selectedMoodName = computed(
+    () => MOODS.find((mood) => mood.id === moodId.value)?.name ?? "—",
 );
 
 function toggleTravel() {
@@ -51,6 +55,22 @@ function resetJourney() {
 function nextMood() {
     const next = renderer?.nextMood();
     if (next) moodId.value = next;
+}
+
+function togglePanel(panel) {
+    sceneMenuOpen.value = false;
+    activePanel.value = activePanel.value === panel ? null : panel;
+}
+
+function selectScene(id) {
+    moodId.value = id;
+    sceneMenuOpen.value = false;
+}
+
+function closeSceneMenu(event) {
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+        sceneMenuOpen.value = false;
+    }
 }
 
 async function captureStill() {
@@ -85,8 +105,8 @@ function colorToHex(color) {
 
 function hexToColor(hex) {
     const value = hex.replace("#", "");
-    return [0, 2, 4].map((offset) =>
-        Number.parseInt(value.slice(offset, offset + 2), 16) / 255,
+    return [0, 2, 4].map(
+        (offset) => Number.parseInt(value.slice(offset, offset + 2), 16) / 255,
     );
 }
 
@@ -106,12 +126,12 @@ async function copyMoodState() {
         low: mood.low.map((value) => Number(value.toFixed(4))),
         high: mood.high.map((value) => Number(value.toFixed(4))),
         colors: Object.fromEntries(
-            AUTHORING_COLORS.filter(({ key }) => key !== "low" && key !== "high").map(
-                ({ key }) => [
-                    key,
-                    mood[key].map((value) => Number(value.toFixed(4))),
-                ],
-            ),
+            AUTHORING_COLORS.filter(
+                ({ key }) => key !== "low" && key !== "high",
+            ).map(({ key }) => [
+                key,
+                mood[key].map((value) => Number(value.toFixed(4))),
+            ]),
         ),
         world: Object.fromEntries(
             AUTHORING_CONTROLS.map(({ key }) => [
@@ -136,7 +156,8 @@ function onKeydown(event) {
         event.target.closest(
             "button, input, select, textarea, [contenteditable='true']",
         )
-    ) return;
+    )
+        return;
     if (event.code === "Space") {
         event.preventDefault();
         toggleTravel();
@@ -146,6 +167,9 @@ function onKeydown(event) {
         hudVisible.value = !hudVisible.value;
     } else if (event.key.toLowerCase() === "r") {
         resetJourney();
+    } else if (event.key === "Escape") {
+        sceneMenuOpen.value = false;
+        activePanel.value = null;
     }
 }
 
@@ -225,286 +249,454 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <main class="stage">
+    <main class="stage" :aria-busy="state === 'loading'">
         <canvas ref="canvas" aria-label="Animated Journey shader"></canvas>
 
         <template v-if="state === 'ready'">
             <button
+                v-if="!hudVisible"
                 class="hud-toggle"
                 type="button"
-                :aria-label="hudVisible ? 'Hide HUD' : 'Show HUD'"
-                :title="hudVisible ? 'Hide HUD (H)' : 'Show HUD (H)'"
-                @click="hudVisible = !hudVisible"
+                aria-label="Show interface"
+                title="Show interface (H)"
+                @click="hudVisible = true"
             >
-                {{ hudVisible ? "HUD−" : "HUD+" }}
+                UI+
             </button>
 
             <section
                 v-show="hudVisible"
                 class="hud"
-                aria-label="Journey controls"
+                aria-label="Journey interface"
             >
-                <header class="topbar">
-                    <div class="identity">
-                        <span class="eyebrow">JOURNEY // Ndc3zl</span>
-                        <strong>RAIL WEATHER SYSTEM</strong>
-                    </div>
-
-                    <div class="telemetry" aria-label="Renderer telemetry">
-                        <span><i></i> WEBGPU</span>
-                        <span>{{ fps || ">" }} FPS</span>
-                        <span>
-                            {{ renderSize }}
-                            <template v-if="renderScale < 0.995">
-                                · {{ Math.round(renderScale * 100) }}%
-                            </template>
-                        </span>
-                        <button
-                            class="telemetry-button"
-                            type="button"
-                            :aria-pressed="authoringVisible"
-                            @click="authoringVisible = !authoringVisible"
+                <nav class="side-rail" aria-label="Interface panels">
+                    <div class="rail-telemetry" aria-label="Renderer telemetry">
+                        <span
+                            class="rail-metric motion-status"
+                            :class="{ holding: !travelRunning }"
                         >
-                            {{ authoringVisible ? "CLOSE LAB" : "MOOD LAB" }}
-                        </button>
-                    </div>
-                </header>
-
-                <aside
-                    v-if="authoringVisible"
-                    class="authoring-drawer"
-                    aria-label="Mood authoring laboratory"
-                >
-                    <div class="panel-head">
-                        <span>MOOD LAB / RESOLVED WORLD</span>
-                        <span>
-                            W {{ windTime.toFixed(1) }}
+                            <i></i><em>{{ statusLabel }}</em>
+                        </span>
+                        <span class="rail-metric"
+                            ><b>{{ fps || ">" }}</b
+                            ><em>FPS</em></span
+                        >
+                        <span class="rail-metric rail-frame">
+                            <b>{{ renderSize }}</b>
+                            <em v-if="renderScale < 0.995"
+                                >{{ Math.round(renderScale * 100) }}%</em
+                            >
+                            <em v-else>FRAME</em>
                         </span>
                     </div>
-
-                    <label
-                        v-for="control in AUTHORING_CONTROLS"
-                        :key="control.key"
-                        class="range-row compact-row"
+                    <button
+                        type="button"
+                        :aria-pressed="activePanel === 'journey'"
+                        @click="togglePanel('journey')"
                     >
-                        <span>
-                            {{ control.label }}
-                            <output>{{ authoringValues[control.key]?.toFixed(2) ?? "—" }}</output>
-                        </span>
-                        <input
-                            v-model.number="authoringValues[control.key]"
-                            type="range"
-                            :min="control.min"
-                            :max="control.max"
-                            :step="control.step"
-                            @input="overrideMood(control.key, authoringValues[control.key])"
-                        />
-                    </label>
+                        <b>01</b><span>Journey</span>
+                    </button>
+                    <button
+                        type="button"
+                        :aria-pressed="activePanel === 'scene'"
+                        @click="togglePanel('scene')"
+                    >
+                        <b>02</b><span>Scene</span>
+                    </button>
+                    <button
+                        type="button"
+                        :aria-pressed="activePanel === 'render'"
+                        @click="togglePanel('render')"
+                    >
+                        <b>03</b><span>Render</span>
+                    </button>
+                    <button
+                        type="button"
+                        :aria-pressed="activePanel === 'lab'"
+                        @click="togglePanel('lab')"
+                    >
+                        <b>04</b><span>Lab</span>
+                    </button>
+                    <button
+                        type="button"
+                        :aria-pressed="activePanel === 'credits'"
+                        @click="togglePanel('credits')"
+                    >
+                        <b>05</b><span>Credits</span>
+                    </button>
+                    <button
+                        class="rail-hide"
+                        type="button"
+                        title="Hide interface (H)"
+                        @click="
+                            hudVisible = false;
+                            activePanel = null;
+                        "
+                    >
+                        <b>H</b><span>Hide</span>
+                    </button>
+                </nav>
 
-                    <div class="color-grid" aria-label="Authored scene colors">
-                        <label
-                            v-for="color in AUTHORING_COLORS"
-                            :key="color.key"
-                            class="color-row"
-                        >
-                            <span>{{ color.label }}</span>
-                            <input
-                                v-model="authoringColors[color.key]"
-                                type="color"
-                                @input="overrideMoodColor(color.key, authoringColors[color.key])"
-                            />
-                        </label>
-                    </div>
-
-                    <div class="button-row">
-                        <button type="button" @click="clearMoodOverrides">
-                            CLEAR OVERRIDES
-                        </button>
-                        <button type="button" @click="copyMoodState">
-                            {{ copyStatus }}
-                        </button>
-                    </div>
-                </aside>
-
-                <div class="crosshair" aria-hidden="true">
-                    <span></span>
-                    <b>{{ statusLabel }}</b>
-                    <span></span>
-                </div>
-
-                <footer class="control-deck">
-                    <section class="panel transport-panel">
-                        <div class="panel-head">
-                            <span>01 / TRANSPORT</span>
-                            <time>{{ travelTime.toFixed(1) }}s</time>
-                        </div>
-
+                <Transition name="drawer" mode="out-in">
+                    <aside
+                        v-if="activePanel"
+                        :key="activePanel"
+                        class="side-drawer"
+                        :aria-label="`${activePanel} controls`"
+                    >
                         <button
-                            class="transport-button"
+                            class="drawer-close"
                             type="button"
-                            @click="toggleTravel"
+                            aria-label="Close panel"
+                            @click="activePanel = null"
                         >
-                            <span
-                                class="transport-icon"
-                                :class="{ stopped: !travelRunning }"
-                            ></span>
-                            <span>
-                                <small>{{
-                                    travelRunning ? "TRAIN LIVE" : "TRAIN HOLD"
-                                }}</small>
-                                <strong>{{ travelLabel }}</strong>
-                            </span>
+                            ×
                         </button>
 
-                        <label class="range-row">
-                            <span
-                                >Travel speed
-                                <output
-                                    >{{ travelSpeed.toFixed(2) }}×</output
-                                ></span
+                        <section
+                            v-if="activePanel === 'journey'"
+                            class="panel-content"
+                        >
+                            <div class="drawer-heading">
+                                <span>01 / JOURNEY</span>
+                                <time>{{ travelTime.toFixed(1) }}s</time>
+                            </div>
+                            <div
+                                class="journey-status"
+                                :class="{ holding: !travelRunning }"
                             >
-                            <input
-                                v-model.number="travelSpeed"
-                                type="range"
-                                min="0.1"
-                                max="2.5"
-                                step="0.05"
-                            />
-                        </label>
-
-                        <div class="button-row">
-                            <button type="button" @click="resetJourney">
-                                RESET JOURNEY
-                            </button>
-                            <button type="button" @click="captureStill">
-                                CAPTURE PNG
-                            </button>
-                        </div>
-                    </section>
-
-                    <section class="panel mood-panel">
-                        <div class="panel-head">
-                            <span>02 / MOOD ENGINE</span>
+                                <i></i>
+                                <span>
+                                    <small>TRAIN STATUS</small>
+                                    <strong>{{ statusLabel }}</strong>
+                                </span>
+                            </div>
                             <button
-                                class="text-button"
+                                class="transport-button"
                                 type="button"
-                                @click="nextMood"
+                                @click="toggleTravel"
                             >
-                                NEXT / M
+                                <span
+                                    class="transport-icon"
+                                    :class="{ stopped: !travelRunning }"
+                                ></span>
+                                <span>
+                                    <small>{{
+                                        travelRunning
+                                            ? "TRAIN LIVE"
+                                            : "TRAIN HOLD"
+                                    }}</small>
+                                    <strong>{{ travelLabel }}</strong>
+                                </span>
                             </button>
-                        </div>
-
-                        <div class="mood-line">
-                            <label>
-                                <span>Scene</span>
-                                <select v-model="moodId">
-                                    <option
-                                        v-for="mood in MOODS"
-                                        :key="mood.id"
-                                        :value="mood.id"
-                                    >
-                                        {{ mood.name }}
-                                    </option>
-                                </select>
+                            <label class="range-row">
+                                <span
+                                    >Travel speed
+                                    <output
+                                        >{{ travelSpeed.toFixed(2) }}×</output
+                                    ></span
+                                >
+                                <input
+                                    v-model.number="travelSpeed"
+                                    type="range"
+                                    min="0.1"
+                                    max="2.5"
+                                    step="0.05"
+                                    :style="{
+                                        '--range-progress': `${((travelSpeed - 0.1) / 2.4) * 100}%`,
+                                    }"
+                                />
                             </label>
+                            <div class="button-row">
+                                <button type="button" @click="resetJourney">
+                                    RESET JOURNEY
+                                </button>
+                                <button type="button" @click="captureStill">
+                                    CAPTURE PNG
+                                </button>
+                            </div>
+                        </section>
 
+                        <section
+                            v-else-if="activePanel === 'scene'"
+                            class="panel-content"
+                        >
+                            <div class="drawer-heading">
+                                <span>02 / SCENE ENGINE</span>
+                                <button
+                                    class="text-button"
+                                    type="button"
+                                    @click="nextMood"
+                                >
+                                    NEXT / M
+                                </button>
+                            </div>
+                            <div class="select-row">
+                                <span>Authored scene</span>
+                                <div
+                                    class="scene-select"
+                                    @focusout="closeSceneMenu"
+                                >
+                                    <button
+                                        class="scene-select-trigger"
+                                        type="button"
+                                        aria-haspopup="listbox"
+                                        :aria-expanded="sceneMenuOpen"
+                                        @click="sceneMenuOpen = !sceneMenuOpen"
+                                    >
+                                        <span>{{ selectedMoodName }}</span
+                                        ><i aria-hidden="true"></i>
+                                    </button>
+                                    <ul
+                                        v-if="sceneMenuOpen"
+                                        class="scene-options"
+                                        role="listbox"
+                                        aria-label="Authored scene"
+                                    >
+                                        <li
+                                            v-for="mood in MOODS"
+                                            :key="mood.id"
+                                        >
+                                            <button
+                                                type="button"
+                                                role="option"
+                                                :aria-selected="
+                                                    mood.id === moodId
+                                                "
+                                                @click="selectScene(mood.id)"
+                                            >
+                                                {{ mood.name }}
+                                            </button>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
                             <label class="switch-label">
                                 <input v-model="autoMood" type="checkbox" />
                                 <span class="switch"></span>
                                 <span>AUTO CYCLE</span>
                             </label>
-                        </div>
-
-                        <label class="range-row">
-                            <span
-                                >Scene intensity
-                                <output
-                                    >{{
-                                        Math.round(moodIntensity * 100)
-                                    }}%</output
-                                ></span
+                            <label class="range-row">
+                                <span
+                                    >Scene intensity
+                                    <output
+                                        >{{
+                                            Math.round(moodIntensity * 100)
+                                        }}%</output
+                                    ></span
+                                >
+                                <input
+                                    v-model.number="moodIntensity"
+                                    type="range"
+                                    min="0"
+                                    max="1"
+                                    step="0.01"
+                                    :style="{
+                                        '--range-progress': `${moodIntensity * 100}%`,
+                                    }"
+                                />
+                            </label>
+                            <label
+                                v-if="autoMood"
+                                class="range-row compact-row"
                             >
-                            <input
-                                v-model.number="moodIntensity"
-                                type="range"
-                                min="0"
-                                max="1"
-                                step="0.01"
-                            />
-                        </label>
+                                <span
+                                    >Cycle interval
+                                    <output>{{ cycleSeconds }}s</output></span
+                                >
+                                <input
+                                    v-model.number="cycleSeconds"
+                                    type="range"
+                                    min="5"
+                                    max="40"
+                                    step="1"
+                                    :style="{
+                                        '--range-progress': `${((cycleSeconds - 5) / 35) * 100}%`,
+                                    }"
+                                />
+                            </label>
+                        </section>
 
-                        <label v-if="autoMood" class="range-row compact-row">
-                            <span
-                                >Cycle interval
-                                <output>{{ cycleSeconds }}s</output></span
+                        <section
+                            v-else-if="activePanel === 'render'"
+                            class="panel-content"
+                        >
+                            <div class="drawer-heading">
+                                <span>03 / RENDER</span>
+                                <span class="exact-badge"
+                                    >SHADER BASE AT 0%</span
+                                >
+                            </div>
+                            <div class="render-readout">
+                                <span
+                                    ><small>BACKEND</small
+                                    ><strong>WEBGPU</strong></span
+                                >
+                                <span
+                                    ><small>FRAME</small
+                                    ><strong>{{ fps || ">" }} FPS</strong></span
+                                >
+                                <span
+                                    ><small>INTERNAL</small
+                                    ><strong>{{ renderSize }}</strong></span
+                                >
+                            </div>
+                            <label class="range-row">
+                                <span
+                                    >Temporal feedback
+                                    <output>{{
+                                        feedbackAmount.toFixed(2)
+                                    }}</output></span
+                                >
+                                <input
+                                    v-model.number="feedbackAmount"
+                                    type="range"
+                                    min="0"
+                                    max="0.65"
+                                    step="0.01"
+                                    :style="{
+                                        '--range-progress': `${(feedbackAmount / 0.65) * 100}%`,
+                                    }"
+                                />
+                            </label>
+                            <label class="range-row">
+                                <span
+                                    >Vignette
+                                    <output
+                                        >{{
+                                            Math.round(vignetteStrength * 100)
+                                        }}%</output
+                                    ></span
+                                >
+                                <input
+                                    v-model.number="vignetteStrength"
+                                    type="range"
+                                    min="0"
+                                    max="1"
+                                    step="0.01"
+                                    :style="{
+                                        '--range-progress': `${vignetteStrength * 100}%`,
+                                    }"
+                                />
+                            </label>
+                            <p class="hint">
+                                <kbd>SPACE</kbd> train · <kbd>M</kbd> scene ·
+                                <kbd>H</kbd> UI · <kbd>R</kbd> reset
+                            </p>
+                        </section>
+
+                        <section
+                            v-else-if="activePanel === 'lab'"
+                            class="panel-content lab-content"
+                        >
+                            <div class="drawer-heading">
+                                <span>04 / MOOD LAB</span>
+                                <span>W {{ windTime.toFixed(1) }}</span>
+                            </div>
+                            <label
+                                v-for="control in AUTHORING_CONTROLS"
+                                :key="control.key"
+                                class="range-row compact-row"
                             >
-                            <input
-                                v-model.number="cycleSeconds"
-                                type="range"
-                                min="5"
-                                max="40"
-                                step="1"
-                            />
-                        </label>
-                    </section>
-
-                    <section class="panel shader-panel">
-                        <div class="panel-head">
-                            <span>03 / SHADER</span>
-                            <span class="exact-badge">ORIGINAL 0% MOOD</span>
-                        </div>
-
-                        <label class="range-row">
-                            <span
-                                >Temporal feedback
-                                <output>{{
-                                    feedbackAmount.toFixed(2)
-                                }}</output></span
+                                <span
+                                    >{{ control.label }}
+                                    <output>{{
+                                        authoringValues[control.key]?.toFixed(
+                                            2,
+                                        ) ?? "—"
+                                    }}</output></span
+                                >
+                                <input
+                                    v-model.number="
+                                        authoringValues[control.key]
+                                    "
+                                    type="range"
+                                    :min="control.min"
+                                    :max="control.max"
+                                    :step="control.step"
+                                    :style="{
+                                        '--range-progress': `${((authoringValues[control.key] - control.min) / (control.max - control.min)) * 100}%`,
+                                    }"
+                                    @input="
+                                        overrideMood(
+                                            control.key,
+                                            authoringValues[control.key],
+                                        )
+                                    "
+                                />
+                            </label>
+                            <div
+                                class="color-grid"
+                                aria-label="Authored scene colors"
                             >
-                            <input
-                                v-model.number="feedbackAmount"
-                                type="range"
-                                min="0"
-                                max="0.65"
-                                step="0.01"
-                            />
-                        </label>
+                                <label
+                                    v-for="color in AUTHORING_COLORS"
+                                    :key="color.key"
+                                    class="color-row"
+                                >
+                                    <span>{{ color.label }}</span>
+                                    <input
+                                        v-model="authoringColors[color.key]"
+                                        type="color"
+                                        @input="
+                                            overrideMoodColor(
+                                                color.key,
+                                                authoringColors[color.key],
+                                            )
+                                        "
+                                    />
+                                </label>
+                            </div>
+                            <div class="button-row sticky-actions">
+                                <button
+                                    type="button"
+                                    @click="clearMoodOverrides"
+                                >
+                                    CLEAR OVERRIDES
+                                </button>
+                                <button type="button" @click="copyMoodState">
+                                    {{ copyStatus }}
+                                </button>
+                            </div>
+                        </section>
 
-                        <label class="range-row">
-                            <span
-                                >Vignette
-                                <output
-                                    >{{
-                                        Math.round(vignetteStrength * 100)
-                                    }}%</output
-                                ></span
-                            >
-                            <input
-                                v-model.number="vignetteStrength"
-                                type="range"
-                                min="0"
-                                max="1"
-                                step="0.01"
-                            />
-                        </label>
-
-                        <p class="hint">
-                            <kbd>SPACE</kbd> train · <kbd>M</kbd> mood ·
-                            <kbd>H</kbd> HUD · <kbd>R</kbd> reset
-                        </p>
-                    </section>
-                </footer>
+                        <section v-else class="panel-content credits-content">
+                            <div class="drawer-heading">
+                                <span>05 / CREDITS</span>
+                                <span>JOURNEY</span>
+                            </div>
+                            <div class="credit-title">
+                                <small>CREATED &amp; DIRECTED BY</small>
+                                <strong>UJJWAL VIVEK</strong>
+                            </div>
+                            <dl class="credit-list">
+                                <div>
+                                    <dt>World &amp; experience</dt>
+                                    <dd>Ujjwal Vivek</dd>
+                                </div>
+                                <div>
+                                    <dt>Rendering system</dt>
+                                    <dd>Vue · WebGPU · WGSL</dd>
+                                </div>
+                                <div>
+                                    <dt>Shader reference</dt>
+                                    <dd>Ndc3zl</dd>
+                                </div>
+                            </dl>
+                            <p class="credit-note">
+                                A moving rail-world built around weather,
+                                ambience, music and the passage of time.
+                            </p>
+                        </section>
+                    </aside>
+                </Transition>
             </section>
         </template>
 
-        <div v-if="state !== 'ready'" class="fallback" role="status">
+        <div v-if="state === 'error'" class="fallback" role="alert">
             <div class="fallback-card">
                 <span class="eyebrow">JOURNEY // WEBGPU</span>
-                <strong>{{
-                    state === "loading"
-                        ? "INITIALIZING RENDERER"
-                        : "RENDERER OFFLINE"
-                }}</strong>
+                <strong>RENDERER OFFLINE</strong>
                 <p>{{ message }}</p>
             </div>
         </div>
