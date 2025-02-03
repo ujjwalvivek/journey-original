@@ -51,6 +51,7 @@ export class JourneyRenderer {
         this.fpsFrames = 0;
         this.fpsWindowStart = 0;
         this.renderBudgetScale = 1;
+        this.sceneAge = 0;
 
         this.resizeObserver = new ResizeObserver(() => this.resize());
         this.render = this.render.bind(this);
@@ -387,7 +388,7 @@ export class JourneyRenderer {
         this.uniformData[0] = this.canvas.width;
         this.uniformData[1] = this.canvas.height;
         this.uniformData[2] = this.clock.travelTime;
-        this.uniformData[3] = 0;
+        this.uniformData[3] = this.clock.foregroundPhase;
 
         this.uniformData[4] = mood.low[0];
         this.uniformData[5] = mood.low[1];
@@ -416,7 +417,7 @@ export class JourneyRenderer {
 
         this.uniformData[24] = mood.trainEmphasis;
         this.uniformData[25] = mood.bridgeEmphasis;
-        this.uniformData[26] = 0;
+        this.uniformData[26] = this.sceneAge;
         this.uniformData[27] = this.clock.windPhase;
 
         writeColor(28, mood.skyColor);
@@ -459,6 +460,7 @@ export class JourneyRenderer {
             return;
 
         const delta = this.frameDelta(now);
+        this.sceneAge += delta;
         const mood = this.moodEngine.update(now / 1000);
         this.clock.advance(delta, {
             travelRunning: this.travelRunning,

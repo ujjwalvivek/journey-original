@@ -11,6 +11,7 @@ test("holding travel does not freeze the wind phase", () => {
 
     assert.equal(clock.travelTime, 0);
     assert.equal(clock.windPhase, 0.2);
+    assert.equal(clock.foregroundPhase, 0.012);
 });
 
 test("changing rates affects future motion without scrubbing accumulated phases", () => {
@@ -33,8 +34,19 @@ test("reset returns every phase to the baseline", () => {
     assert.deepEqual({
         travelTime: clock.travelTime,
         windPhase: clock.windPhase,
+        foregroundPhase: clock.foregroundPhase,
     }, {
         travelTime: 0,
         windPhase: 0,
+        foregroundPhase: 0,
     });
+});
+
+test("foreground clouds switch from journey motion to distant wind motion", () => {
+    const clock = new EnvironmentClock();
+    clock.advance(0.1, { travelRunning: true, travelSpeed: 2, windSpeed: 3 });
+    assert.equal(clock.foregroundPhase, 0.8);
+
+    clock.advance(0.1, { travelRunning: false, travelSpeed: 2, windSpeed: 3 });
+    assert.ok(Math.abs(clock.foregroundPhase - 0.818) < 1e-12);
 });
