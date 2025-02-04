@@ -35,11 +35,26 @@ test("reset returns every phase to the baseline", () => {
         travelTime: clock.travelTime,
         windPhase: clock.windPhase,
         foregroundPhase: clock.foregroundPhase,
+        smokeLevel: clock.smokeLevel,
     }, {
         travelTime: 0,
         windPhase: 0,
         foregroundPhase: 0,
+        smokeLevel: 0,
     });
+});
+
+test("smoke ramps up and down instead of switching abruptly", () => {
+    const clock = new EnvironmentClock();
+
+    clock.advance(0.1, { travelRunning: true });
+    assert.ok(Math.abs(clock.smokeLevel - 0.07) < 1e-12);
+
+    clock.advance(0.1, { travelRunning: false });
+    assert.ok(Math.abs(clock.smokeLevel - 0.028) < 1e-12);
+
+    clock.advance(0.1, { travelRunning: false });
+    assert.equal(clock.smokeLevel, 0);
 });
 
 test("foreground clouds switch from journey motion to distant wind motion", () => {

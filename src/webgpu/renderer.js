@@ -352,6 +352,7 @@ export class JourneyRenderer {
             travelRunning: this.travelRunning,
             travelTime: this.clock.travelTime,
             windTime: this.clock.windPhase,
+            smokeLevel: this.clock.smokeLevel,
             moodId: this.moodEngine.currentId,
             mood: this.resolvedMood,
         };
@@ -411,7 +412,7 @@ export class JourneyRenderer {
         this.uniformData[19] = mood.turbulence;
 
         this.uniformData[20] = mood.windSpeed;
-        this.uniformData[21] = mood.smokeAmount;
+        this.uniformData[21] = mood.smokeAmount * this.clock.smokeLevel;
         this.uniformData[22] = mood.fogDensity;
         this.uniformData[23] = mood.contrast;
 

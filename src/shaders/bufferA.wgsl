@@ -302,6 +302,7 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let sceneAge = uniforms.subject.z;
   let bridgeArrival = easeOutBack(smoothstep(0.04, 0.92, sceneAge));
   let trainArrival = easeOutCubic(smoothstep(0.82, 2.45, sceneAge));
+  let trainPresence = smoothstep(0.02, 0.12, trainArrival);
   let trainUv = uv + vec2f((1.0 - trainArrival) * 0.72, 0.0);
 
   var uv2 = fract(trainUv * 9.0);
@@ -377,30 +378,41 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
     boxMask(trainUv, 0.454, 0.472, 0.106, 0.119);
   col = mix(col, trainDark * 0.58, driverWindowFrame);
 
-  let roofEdgeRegion = (1.0 - step(0.44, trainUv.x)) *
-    step(0.09, uv2.x) * (1.0 - step(0.91, uv2.x));
+  // Reuse the exact transformed wagon coordinate and roof bounds. Keeping a
+  // separate screen-space strip here made the sliver appear detached during
+  // the train's entrance animation.
+  let roofEdgeRegion = trainPresence * (1.0 - step(0.44, trainUv.x)) *
+    step(0.15, uv2.x) * (1.0 - step(0.85, uv2.x));
   let roofEdgeCore = roofEdgeRegion *
-    (1.0 - smoothstep(0.00035, 0.0011, abs(trainUv.y - 0.1162)));
-  let roofEdgeBloom = roofEdgeRegion * exp(-abs(trainUv.y - 0.1162) * 620.0);
+    (1.0 - smoothstep(0.00018, 0.00062, abs(trainUv.y - 0.11645)));
+  let roofEdgeBloom = roofEdgeRegion * exp(-abs(trainUv.y - 0.11645) * 760.0);
 
   let headlightDistance = length(trainUv - headlightOrigin);
   let headlightCore = wheelOcclusion * (1.0 - smoothstep(0.0015, 0.0032, headlightDistance));
-  let headlightBloom = wheelOcclusion * exp(-headlightDistance * 150.0);
+  let headlightBloom = wheelOcclusion * exp(-headlightDistance * 235.0);
 
   // A low, widening cone makes the headlight read through atmospheric haze,
   // while the small circular source keeps it attached to the locomotive.
   let beamX = max(trainUv.x - headlightOrigin.x, 0.0);
-  let beamWidth = 0.0035 + beamX * 0.16;
+  let beamWidth = 0.004 + beamX * 0.268;
   let beamCenterY = headlightOrigin.y - beamX * 0.018;
-  let beamShape = 1.0 - smoothstep(beamWidth * 0.58, beamWidth, abs(trainUv.y - beamCenterY));
+  let beamDistanceY = abs(trainUv.y - beamCenterY);
+  let beamCoreShape = 1.0 - smoothstep(beamWidth * 0.08, beamWidth * 0.5, beamDistanceY);
+  let beamShape = 1.0 - smoothstep(beamWidth * 0.24, beamWidth * 1.2, beamDistanceY);
+  let beamGlowShape = 1.0 - smoothstep(beamWidth * 0.45, beamWidth * 2.2, beamDistanceY);
   let beamStart = smoothstep(0.001, 0.012, beamX);
-  let beamEnd = 1.0 - smoothstep(0.12, 0.24, beamX);
+  let beamCoreEnd = 1.0 - smoothstep(0.045, 0.105, beamX);
+  let beamEnd = 1.0 - smoothstep(0.065, 0.155, beamX);
+  let beamGlowEnd = 1.0 - smoothstep(0.075, 0.19, beamX);
+  let beamDistanceFalloff = exp(-beamX * 7.5);
   let beamNoise = 0.76 + 0.24 * fbm2(vec2f(trainUv.x * 5.0 - uniforms.subject.w * 0.025, trainUv.y * 12.0), 4);
-  let headlightBeam = beamShape * beamStart * beamEnd * beamNoise;
-  let trainEmission = clamp(trainLift, 0.0, 1.0) * (
+  let headlightBeam = beamShape * beamStart * beamEnd * beamDistanceFalloff * beamNoise;
+  let headlightBeamCore = beamCoreShape * beamStart * beamCoreEnd * beamDistanceFalloff * (0.88 + beamNoise * 0.12);
+  let headlightBeamGlow = beamGlowShape * beamStart * beamGlowEnd * beamDistanceFalloff * beamNoise;
+  let trainEmission = trainPresence * clamp(trainLift, 0.0, 1.0) * (
     windowCore * 1.05 + windowBloom * 0.45 +
     driverWindowCore * 1.05 + driverWindowBloom * 0.38 +
-    roofEdgeCore * 0.62 + roofEdgeBloom * 0.14
+    roofEdgeCore * 0.58 + roofEdgeBloom * 0.13
   );
 
   var dist = 5.0;
@@ -408,18 +420,19 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   uv2 = trainUv + vec2f(smokeT / dist + 3.5, 0.0);
   uv2.x -= smokeT / dist * 0.2;
   let smokeAmount = clamp(uniforms.motion.y, 0.0, 1.5);
+  let smokeOpacity = smoothstep(0.0, 0.22, smokeAmount);
   let h = fbm2(uv2, 8) - (0.65 - smokeAmount * 0.1);
 
   if (trainUv.x < 0.49 && smokeAmount > 0.001) {
     let x = -trainUv.x + 0.49;
     let y = abs(trainUv.y + h * 0.4 - 0.16 * sqrt(x) - 0.12) - 0.8 * x * exp(-x * 10.0);
-    if (y < 0.0) { col = uniforms.smokeLight.rgb; }
-    if (y < -0.02) { col = uniforms.smokeShadow.rgb; }
+    if (y < 0.0) { col = mix(col, uniforms.smokeLight.rgb, smokeOpacity); }
+    if (y < -0.02) { col = mix(col, uniforms.smokeShadow.rgb, smokeOpacity); }
   }
 
   // The cone is atmospheric light and belongs inside the scene. The round
   // practical lamp is emitted after grading with explicit scene occlusion.
-  col += uniforms.practicalLightColor.rgb * headlightBeam * clamp(trainLift, 0.0, 1.0) * 0.42;
+  col += uniforms.practicalLightColor.rgb * headlightBeamGlow * trainPresence * clamp(trainLift, 0.0, 1.0) * 0.09;
 
   dist = 5.0;
   let bridgeUv = uv + vec2f(0.0, (1.0 - bridgeArrival) * 0.48);
@@ -472,10 +485,14 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   // separate full-resolution blur pass.
   let practicalLightColor = uniforms.practicalLightColor.rgb;
   let trainLightVisibility = clamp(k * (1.0 - fg.a), 0.0, 1.0);
-  let headlightEmission = clamp(trainLift, 0.0, 1.0) *
-    (headlightCore * 1.25 + headlightBloom * 0.82) * trainLightVisibility;
+  let headlightEmission = trainPresence * clamp(trainLift, 0.0, 1.0) *
+    (headlightCore * 1.16 + headlightBloom * 0.48) * trainLightVisibility;
+  let beamEmission = trainPresence * clamp(trainLift, 0.0, 1.0) *
+    (headlightBeamCore * 0.34 + headlightBeam * 0.2 + headlightBeamGlow * 0.08) *
+    trainLightVisibility;
   col += practicalLightColor * trainEmission * trainLightVisibility;
   col += practicalLightColor * headlightEmission;
+  col += practicalLightColor * beamEmission;
   col += practicalLightColor * bridgeEmission;
 
   // Shadertoy Buffer A feedback. Because WebGPU render-target textures use a

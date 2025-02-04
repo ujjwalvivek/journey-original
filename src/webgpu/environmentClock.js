@@ -3,6 +3,7 @@ export class EnvironmentClock {
         this.travelTime = 0;
         this.windPhase = 0;
         this.foregroundPhase = 0;
+        this.smokeLevel = 0;
     }
 
     advance(
@@ -24,6 +25,14 @@ export class EnvironmentClock {
             this.foregroundPhase += safeDelta * Math.max(0, windSpeed) * 0.06;
         }
         this.windPhase += safeDelta * Math.max(0, windSpeed);
+        const smokeTarget = travelRunning ? 1 : 0;
+        const smokeRate = travelRunning ? 0.7 : 0.42;
+        const smokeStep = safeDelta * smokeRate;
+        if (this.smokeLevel < smokeTarget) {
+            this.smokeLevel = Math.min(smokeTarget, this.smokeLevel + smokeStep);
+        } else {
+            this.smokeLevel = Math.max(smokeTarget, this.smokeLevel - smokeStep);
+        }
         return safeDelta;
     }
 
@@ -31,5 +40,6 @@ export class EnvironmentClock {
         this.travelTime = 0;
         this.windPhase = 0;
         this.foregroundPhase = 0;
+        this.smokeLevel = 0;
     }
 }
