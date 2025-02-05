@@ -11,6 +11,7 @@ const canvas = ref(null);
 const state = ref("loading");
 const message = ref("Starting WebGPU…");
 const hudVisible = ref(true);
+const railCanReveal = ref(true);
 const activePanel = ref(null);
 const travelRunning = ref(true);
 const travelSpeed = ref(1);
@@ -59,7 +60,16 @@ function nextMood() {
 
 function togglePanel(panel) {
     sceneMenuOpen.value = false;
+    hudVisible.value = true;
     activePanel.value = activePanel.value === panel ? null : panel;
+}
+
+function hideHud(event) {
+    hudVisible.value = false;
+    railCanReveal.value = !event;
+    activePanel.value = null;
+    sceneMenuOpen.value = false;
+    event?.currentTarget?.blur();
 }
 
 function selectScene(id) {
@@ -164,7 +174,8 @@ function onKeydown(event) {
     } else if (event.key.toLowerCase() === "m") {
         nextMood();
     } else if (event.key.toLowerCase() === "h") {
-        hudVisible.value = !hudVisible.value;
+        if (hudVisible.value) hideHud();
+        else hudVisible.value = true;
     } else if (event.key.toLowerCase() === "r") {
         resetJourney();
     } else if (event.key === "Escape") {
@@ -253,23 +264,19 @@ onBeforeUnmount(() => {
         <canvas ref="canvas" aria-label="Animated Journey shader"></canvas>
 
         <template v-if="state === 'ready'">
-            <button
-                v-if="!hudVisible"
-                class="hud-toggle"
-                type="button"
-                aria-label="Show interface"
-                title="Show interface (H)"
-                @click="hudVisible = true"
-            >
-                UI+
-            </button>
-
             <section
-                v-show="hudVisible"
                 class="hud"
+                :class="{
+                    'hud-hidden': !hudVisible,
+                    'rail-can-reveal': railCanReveal,
+                }"
                 aria-label="Journey interface"
             >
-                <nav class="side-rail" aria-label="Interface panels">
+                <nav
+                    class="side-rail"
+                    aria-label="Interface panels"
+                    @pointerleave="railCanReveal = true"
+                >
                     <div class="rail-telemetry" aria-label="Renderer telemetry">
                         <span
                             class="rail-metric motion-status"
@@ -328,10 +335,7 @@ onBeforeUnmount(() => {
                         class="rail-hide"
                         type="button"
                         title="Hide interface (H)"
-                        @click="
-                            hudVisible = false;
-                            activePanel = null;
-                        "
+                        @click="hideHud"
                     >
                         <b>H</b><span>Hide</span>
                     </button>
@@ -342,6 +346,7 @@ onBeforeUnmount(() => {
                         v-if="activePanel"
                         :key="activePanel"
                         class="side-drawer"
+                        :class="{ 'scene-drawer': activePanel === 'scene' }"
                         :aria-label="`${activePanel} controls`"
                     >
                         <button
@@ -452,6 +457,7 @@ onBeforeUnmount(() => {
                                         class="scene-options"
                                         role="listbox"
                                         aria-label="Authored scene"
+                                        @wheel.stop
                                     >
                                         <li
                                             v-for="mood in MOODS"

@@ -81,8 +81,7 @@ canvas {
 }
 
 .side-rail,
-.side-drawer,
-.hud-toggle {
+.side-drawer {
     pointer-events: auto;
 }
 
@@ -129,6 +128,29 @@ canvas {
     box-shadow: 0 16px 46px rgba(0, 0, 0, 0.28);
     -webkit-backdrop-filter: blur(12px) saturate(0.82);
     backdrop-filter: blur(12px) saturate(0.82);
+    transition: transform 420ms cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: transform;
+}
+
+.hud-hidden .side-rail {
+    transform: translate(calc(100% + clamp(10px, 1.25vw, 20px) - 6px), -50%);
+}
+
+.hud-hidden::after {
+    content: "";
+    position: absolute;
+    z-index: 7;
+    top: 0;
+    right: 0;
+    width: 32px;
+    height: 100%;
+    pointer-events: auto;
+}
+
+.hud-hidden.rail-can-reveal:hover .side-rail,
+.hud-hidden.rail-can-reveal .side-rail:focus-within {
+    transform: translateY(-50%);
+    transition-timing-function: cubic-bezier(0.18, 1.45, 0.4, 1);
 }
 
 .side-rail button {
@@ -244,6 +266,10 @@ canvas {
     backdrop-filter: blur(18px) saturate(0.82);
     scrollbar-color: rgba(255, 135, 88, 0.45) rgba(255, 255, 255, 0.035);
     scrollbar-width: thin;
+}
+
+.side-drawer.scene-drawer {
+    overflow: visible;
 }
 
 .side-drawer::-webkit-scrollbar {
@@ -545,8 +571,9 @@ input[type="range"]:focus-visible::-moz-range-thumb {
     top: calc(100% + 4px);
     right: 0;
     left: 0;
-    max-height: 224px;
+    max-height: min(224px, calc(50vh - 12px));
     overflow: auto;
+    overscroll-behavior: contain;
     margin: 0;
     padding: 4px;
     border: 1px solid rgba(255, 145, 99, 0.42);
@@ -814,22 +841,6 @@ kbd {
     background: linear-gradient(transparent, var(--panel-deep) 28%);
 }
 
-.hud-toggle {
-    position: absolute;
-    z-index: 10;
-    top: clamp(14px, 2vw, 30px);
-    right: clamp(14px, 2vw, 30px);
-    min-width: 48px;
-    min-height: 29px;
-    border: 1px solid var(--line);
-    color: rgba(255, 238, 227, 0.72);
-    background: rgba(17, 9, 8, 0.58);
-    -webkit-backdrop-filter: blur(8px);
-    backdrop-filter: blur(8px);
-    cursor: pointer;
-    font-size: 9px;
-}
-
 .drawer-enter-active,
 .drawer-leave-active {
     transition:
@@ -892,6 +903,22 @@ kbd {
         left: 10px;
         width: auto;
         grid-template-columns: repeat(6, 1fr);
+        transform: none;
+    }
+
+    .hud-hidden .side-rail {
+        transform: translateY(calc(100% + 10px - 6px));
+    }
+
+    .hud-hidden::after {
+        top: auto;
+        bottom: 0;
+        width: 100%;
+        height: 28px;
+    }
+
+    .hud-hidden.rail-can-reveal:hover .side-rail,
+    .hud-hidden.rail-can-reveal .side-rail:focus-within {
         transform: none;
     }
 
