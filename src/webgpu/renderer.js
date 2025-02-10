@@ -5,6 +5,7 @@ import { loadExactNoiseTexture } from "./textures.js";
 import { MoodEngine } from "./moodEngine.js";
 import { fitRenderSize } from "./renderBudget.js";
 import { EnvironmentClock } from "./environmentClock.js";
+import { CueTimeline } from "../journey/cueTimeline.js";
 
 const BUFFER_FORMAT = "rgba16float";
 const UNIFORM_FLOATS = 80;
@@ -37,6 +38,7 @@ export class JourneyRenderer {
 
         this.moodEngine = new MoodEngine();
         this.clock = new EnvironmentClock();
+        this.cueTimeline = new CueTimeline();
         this.resolvedMood = this.moodEngine.update(performance.now() / 1000);
         this.travelRunning = true;
         this.travelSpeed = 1;
@@ -319,7 +321,9 @@ export class JourneyRenderer {
     }
 
     setAutoMood(enabled) {
-        this.moodEngine.setAutoCycle(enabled);
+        this.moodEngine.setAutoCycle(false);
+        const cue = this.cueTimeline.setEnabled(enabled);
+        if (enabled) this.moodEngine.setMood(cue.moodId);
     }
 
     setMoodCycleSeconds(value) {
@@ -340,6 +344,8 @@ export class JourneyRenderer {
 
     resetJourney() {
         this.clock.reset();
+        const cue = this.cueTimeline.reset();
+        if (this.cueTimeline.enabled) this.moodEngine.setMood(cue.moodId);
         this.clearFeedback();
     }
 
@@ -353,6 +359,8 @@ export class JourneyRenderer {
             travelTime: this.clock.travelTime,
             windTime: this.clock.windPhase,
             smokeLevel: this.clock.smokeLevel,
+            cueId: this.cueTimeline.current.id,
+            cueProgress: this.cueTimeline.elapsedInCue() / this.cueTimeline.current.duration,
             moodId: this.moodEngine.currentId,
             mood: this.resolvedMood,
         };
@@ -462,10 +470,18 @@ export class JourneyRenderer {
 
         const delta = this.frameDelta(now);
         this.sceneAge += delta;
+        const cueState = this.cueTimeline.advance(delta, {
+            running: this.travelRunning,
+            speed: this.travelSpeed,
+        });
+        if (cueState.changed) this.moodEngine.setMood(cueState.cue.moodId, now / 1000);
         const mood = this.moodEngine.update(now / 1000);
+        const cueTravelScale = this.cueTimeline.enabled
+            ? cueState.cue.travelScale
+            : 1;
         this.clock.advance(delta, {
             travelRunning: this.travelRunning,
-            travelSpeed: this.travelSpeed,
+            travelSpeed: this.travelSpeed * cueTravelScale,
             windSpeed: mood.windSpeed,
         });
         this.writeUniforms(mood);

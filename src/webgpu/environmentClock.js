@@ -42,4 +42,5 @@ export class EnvironmentClock {
         this.foregroundPhase = 0;
         this.smokeLevel = 0;
     }
+
 }

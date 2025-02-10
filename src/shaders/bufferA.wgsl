@@ -93,6 +93,33 @@ fn easeOutCubic(tIn: f32) -> f32 {
   return 1.0 - t * t * t;
 }
 
+fn wheelMotionMask(pointIn: vec2f, radius: f32, angle: f32) -> f32 {
+  let c = cos(angle);
+  let s = sin(angle);
+  let point = vec2f(
+    pointIn.x * c - pointIn.y * s,
+    pointIn.x * s + pointIn.y * c
+  );
+  let radial = length(point);
+  let inside = 1.0 - smoothstep(radius * 0.82, radius, radial);
+  let spokeDistance = min(
+    abs(point.y),
+    min(
+      abs(dot(point, vec2f(0.8660254, 0.5))),
+      abs(dot(point, vec2f(0.8660254, -0.5)))
+    )
+  );
+  let spokes = 1.0 - smoothstep(
+    radius * 0.035,
+    radius * 0.105,
+    spokeDistance
+  );
+  let spokeReach = smoothstep(radius * 0.16, radius * 0.28, radial) *
+    (1.0 - smoothstep(radius * 0.55, radius * 0.68, radial));
+  let hub = 1.0 - smoothstep(radius * 0.09, radius * 0.2, radial);
+  return clamp((spokes * spokeReach + hub * 0.42) * inside, 0.0, 1.0);
+}
+
 fn cloudCoordinates(uv: vec2f, time: f32, distance: f32, offset: f32) -> vec2f {
   // Scale the noise field isotropically around a stable screen-space anchor.
   // This changes cloud feature size without stretching the composed image.
@@ -328,13 +355,20 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let chem2 = boxMask(trainUv, 0.488, 0.496, 0.12, 0.123);
   let locoRoof = boxMask(trainUv, 0.443, 0.47, 0.11, 0.117);
 
-  var wheel = 1.0 - step(0.00004, dot(trainUv - vec2f(0.457, 0.106), trainUv - vec2f(0.457, 0.106)));
+  var wheel = 1.0 - step(0.000023, dot(trainUv - vec2f(0.457, 0.1055), trainUv - vec2f(0.457, 0.1055)));
   wheel += 1.0 - step(0.00002, dot(trainUv - vec2f(0.487, 0.105), trainUv - vec2f(0.487, 0.105)));
   wheel += 1.0 - step(0.00002, dot(trainUv - vec2f(0.497, 0.105), trainUv - vec2f(0.497, 0.105)));
+
+  let wheelAngle = travelT * 2.7;
+  var wheelMotion = wheelMotionMask(trainUv - vec2f(0.457, 0.1055), 0.0048, wheelAngle);
+  wheelMotion += wheelMotionMask(trainUv - vec2f(0.487, 0.105), 0.0045, wheelAngle);
+  wheelMotion += wheelMotionMask(trainUv - vec2f(0.497, 0.105), 0.0045, wheelAngle);
 
   if (trainUv.x < 0.45 && trainUv.y > 0.025 && trainUv.y < 0.2) {
     wheel += 1.0 - step(0.002, dot(uv2 - vec2f(0.2, 0.95), uv2 - vec2f(0.2, 0.95)));
     wheel += 1.0 - step(0.002, dot(uv2 - vec2f(0.8, 0.95), uv2 - vec2f(0.8, 0.95)));
+    wheelMotion += wheelMotionMask(uv2 - vec2f(0.2, 0.95), 0.0447, wheelAngle);
+    wheelMotion += wheelMotionMask(uv2 - vec2f(0.8, 0.95), 0.0447, wheelAngle);
   }
 
   let trainLift = uniforms.subject.x;
@@ -412,7 +446,8 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let trainEmission = trainPresence * clamp(trainLift, 0.0, 1.0) * (
     windowCore * 1.05 + windowBloom * 0.45 +
     driverWindowCore * 1.05 + driverWindowBloom * 0.38 +
-    roofEdgeCore * 0.58 + roofEdgeBloom * 0.13
+    roofEdgeCore * 0.58 + roofEdgeBloom * 0.13 +
+    wheelMotion * 0.62
   );
 
   var dist = 5.0;
