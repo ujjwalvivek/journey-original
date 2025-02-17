@@ -1,6 +1,7 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { JourneyRenderer } from "./webgpu/renderer.js";
+import { mountCanvasFallback } from "./fallback/canvasFallback.js";
 import {
     AUTHORING_COLORS,
     AUTHORING_CONTROLS,
@@ -8,6 +9,8 @@ import {
 } from "./webgpu/moodEngine.js";
 
 const canvas = ref(null);
+const fallbackCanvas = ref(null);
+const fallbackPreview = ref(false);
 const state = ref("loading");
 const message = ref("Starting WebGPU…");
 const hudVisible = ref(true);
@@ -19,20 +22,22 @@ const moodId = ref("departure");
 const sceneMenuOpen = ref(false);
 const moodIntensity = ref(1);
 const autoMood = ref(false);
-const cycleSeconds = ref(14);
 const feedbackAmount = ref(0.3);
 const vignetteStrength = ref(1);
 const fps = ref(0);
-const renderSize = ref("—");
+const renderSize = ref("-");
 const renderScale = ref(1);
 const travelTime = ref(0);
 const windTime = ref(0);
+const cueId = ref("departure");
+const cueProgress = ref(0);
 const authoringValues = ref({});
 const authoringColors = ref({});
 const copyStatus = ref("COPY STATE");
 
 let renderer = null;
 let statsTimer = 0;
+let destroyFallback = null;
 
 const travelLabel = computed(() =>
     travelRunning.value ? "STOP TRAIN" : "START TRAIN",
@@ -41,7 +46,7 @@ const statusLabel = computed(() =>
     travelRunning.value ? "IN MOTION" : "HOLDING",
 );
 const selectedMoodName = computed(
-    () => MOODS.find((mood) => mood.id === moodId.value)?.name ?? "—",
+    () => MOODS.find((mood) => mood.id === moodId.value)?.name ?? "-",
 );
 
 function toggleTravel() {
@@ -54,6 +59,7 @@ function resetJourney() {
 }
 
 function nextMood() {
+    autoMood.value = false;
     const next = renderer?.nextMood();
     if (next) moodId.value = next;
 }
@@ -73,6 +79,7 @@ function hideHud(event) {
 }
 
 function selectScene(id) {
+    autoMood.value = false;
     moodId.value = id;
     sceneMenuOpen.value = false;
 }
@@ -96,6 +103,23 @@ async function captureStill() {
     } catch (error) {
         console.error(error);
     }
+}
+
+async function showRendererError(error) {
+    state.value = "error";
+    message.value = error instanceof Error ? error.message : String(error);
+    await nextTick();
+    destroyFallback?.();
+    destroyFallback = mountCanvasFallback(fallbackCanvas.value);
+}
+
+async function setFallbackPreview(visible) {
+    fallbackPreview.value = Boolean(visible);
+    await nextTick();
+    destroyFallback?.();
+    destroyFallback = fallbackPreview.value
+        ? mountCanvasFallback(fallbackCanvas.value)
+        : null;
 }
 
 function overrideMood(key, value) {
@@ -179,6 +203,9 @@ function onKeydown(event) {
     } else if (event.key.toLowerCase() === "r") {
         resetJourney();
     } else if (event.key === "Escape") {
+        if (fallbackPreview.value && state.value !== "error") {
+            setFallbackPreview(false);
+        }
         sceneMenuOpen.value = false;
         activePanel.value = null;
     }
@@ -190,24 +217,21 @@ watch(moodId, (value) => {
 });
 watch(moodIntensity, (value) => renderer?.setMoodIntensity(value));
 watch(autoMood, (value) => renderer?.setAutoMood(value));
-watch(cycleSeconds, (value) => renderer?.setMoodCycleSeconds(value));
 watch(feedbackAmount, (value) => renderer?.setFeedbackAmount(value));
 watch(vignetteStrength, (value) => renderer?.setVignetteStrength(value));
 
 onMounted(async () => {
     try {
         if (!navigator.gpu) {
-            state.value = "error";
-            message.value =
-                "WebGPU is not available in this browser. Use a current Chrome or Edge build.";
+            await showRendererError(
+                "WebGPU is unavailable in this browser or has been disabled.",
+            );
             return;
         }
 
         renderer = new JourneyRenderer(canvas.value, {
             onFatalError(error) {
-                state.value = "error";
-                message.value =
-                    error instanceof Error ? error.message : String(error);
+                showRendererError(error);
             },
         });
         await renderer.init();
@@ -216,7 +240,6 @@ onMounted(async () => {
         renderer.setMood(moodId.value);
         renderer.setMoodIntensity(moodIntensity.value);
         renderer.setAutoMood(autoMood.value);
-        renderer.setMoodCycleSeconds(cycleSeconds.value);
         renderer.setFeedbackAmount(feedbackAmount.value);
         renderer.setVignetteStrength(vignetteStrength.value);
         renderer.startRenderer();
@@ -230,6 +253,8 @@ onMounted(async () => {
             renderScale.value = stats.renderBudgetScale;
             travelTime.value = stats.travelTime;
             windTime.value = stats.windTime;
+            cueId.value = stats.cueId;
+            cueProgress.value = stats.cueProgress;
             travelRunning.value = stats.travelRunning;
             authoringValues.value = Object.fromEntries(
                 AUTHORING_CONTROLS.map(({ key }) => [key, stats.mood[key]]),
@@ -247,8 +272,7 @@ onMounted(async () => {
         window.addEventListener("keydown", onKeydown);
     } catch (error) {
         console.error(error);
-        state.value = "error";
-        message.value = error instanceof Error ? error.message : String(error);
+        await showRendererError(error);
     }
 });
 
@@ -256,6 +280,7 @@ onBeforeUnmount(() => {
     window.clearInterval(statsTimer);
     window.removeEventListener("keydown", onKeydown);
     renderer?.destroy();
+    destroyFallback?.();
 });
 </script>
 
@@ -480,8 +505,12 @@ onBeforeUnmount(() => {
                             <label class="switch-label">
                                 <input v-model="autoMood" type="checkbox" />
                                 <span class="switch"></span>
-                                <span>AUTO CYCLE</span>
+                                <span>AUTHORED JOURNEY</span>
                             </label>
+                            <div v-if="autoMood" class="cue-readout">
+                                <span><small>ACTIVE CUE</small><strong>{{ cueId.replaceAll("-", " ") }}</strong></span>
+                                <i><b :style="{ transform: `scaleX(${cueProgress})` }"></b></i>
+                            </div>
                             <label class="range-row">
                                 <span
                                     >Scene intensity
@@ -499,25 +528,6 @@ onBeforeUnmount(() => {
                                     step="0.01"
                                     :style="{
                                         '--range-progress': `${moodIntensity * 100}%`,
-                                    }"
-                                />
-                            </label>
-                            <label
-                                v-if="autoMood"
-                                class="range-row compact-row"
-                            >
-                                <span
-                                    >Cycle interval
-                                    <output>{{ cycleSeconds }}s</output></span
-                                >
-                                <input
-                                    v-model.number="cycleSeconds"
-                                    type="range"
-                                    min="5"
-                                    max="40"
-                                    step="1"
-                                    :style="{
-                                        '--range-progress': `${((cycleSeconds - 5) / 35) * 100}%`,
                                     }"
                                 />
                             </label>
@@ -547,6 +557,15 @@ onBeforeUnmount(() => {
                                     ><strong>{{ renderSize }}</strong></span
                                 >
                             </div>
+                            <label class="switch-label preview-switch">
+                                <input
+                                    type="checkbox"
+                                    :checked="fallbackPreview"
+                                    @change="setFallbackPreview($event.target.checked)"
+                                />
+                                <span class="switch"></span>
+                                <span>PLATFORM NOTICE PREVIEW</span>
+                            </label>
                             <label class="range-row">
                                 <span
                                     >Temporal feedback
@@ -609,7 +628,7 @@ onBeforeUnmount(() => {
                                     <output>{{
                                         authoringValues[control.key]?.toFixed(
                                             2,
-                                        ) ?? "—"
+                                        ) ?? "-"
                                     }}</output></span
                                 >
                                 <input
@@ -699,11 +718,18 @@ onBeforeUnmount(() => {
             </section>
         </template>
 
-        <div v-if="state === 'error'" class="fallback" role="alert">
+        <div
+            v-if="state === 'error' || fallbackPreview"
+            class="fallback"
+            :role="state === 'error' ? 'alert' : 'dialog'"
+        >
+            <canvas ref="fallbackCanvas" class="fallback-art" aria-hidden="true"></canvas>
             <div class="fallback-card">
-                <span class="eyebrow">JOURNEY // WEBGPU</span>
-                <strong>RENDERER OFFLINE</strong>
-                <p>{{ message }}</p>
+                <span class="eyebrow">JOURNEY // PLATFORM NOTICE</span>
+                <strong>WEBGPU REQUIRED</strong>
+                <p class="fallback-intro">The journey is a WebGPU and WGSL workpiece. This browser could not open its renderer.</p>
+                <p class="fallback-diagnostic" v-if="state === 'error'">{{ message }}</p>
+                <p class="fallback-diagnostic" v-else>Previewing the non-WebGPU platform notice.</p>
             </div>
         </div>
     </main>

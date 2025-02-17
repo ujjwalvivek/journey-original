@@ -651,6 +651,51 @@ input[type="range"]:focus-visible::-moz-range-thumb {
     outline-offset: 3px;
 }
 
+.cue-readout {
+    display: grid;
+    gap: 9px;
+    margin-top: 4px;
+    padding: 10px 11px;
+    border-left: 2px solid var(--accent);
+    background: linear-gradient(90deg, rgba(255, 119, 72, 0.1), transparent);
+}
+
+.cue-readout span,
+.cue-readout small,
+.cue-readout strong {
+    display: block;
+}
+
+.cue-readout small {
+    margin-bottom: 3px;
+    color: rgba(255, 218, 194, 0.48);
+    font-size: 7px;
+    letter-spacing: 0.11em;
+}
+
+.cue-readout strong {
+    color: rgba(255, 241, 231, 0.84);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.cue-readout i {
+    height: 2px;
+    overflow: hidden;
+    background: rgba(255, 225, 207, 0.13);
+}
+
+.cue-readout b {
+    display: block;
+    width: 100%;
+    height: 100%;
+    background: var(--accent);
+    transform-origin: left;
+    transition: transform 280ms linear;
+}
+
 .button-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -859,39 +904,75 @@ kbd {
     inset: 0;
     z-index: 40;
     display: grid;
-    place-items: center;
-    padding: 24px;
-    background: radial-gradient(
-        circle at 50% 45%,
-        #311813,
-        #120c0a 52%,
-        #090706
-    );
+    align-items: start;
+    justify-items: start;
+    padding: clamp(28px, 5vw, 82px);
+    padding-top: clamp(42px, 8vh, 92px);
+    overflow: hidden;
+    background: #090812;
+}
+
+.fallback-art {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
 }
 
 .fallback-card {
-    width: min(520px, 100%);
-    padding: 25px;
-    border: 1px solid rgba(255, 222, 202, 0.16);
-    border-left: 2px solid #ff7e53;
-    background: rgba(22, 12, 10, 0.72);
+    position: relative;
+    z-index: 2;
+    width: min(390px, 42vw);
+    padding: 13px 16px 14px;
+    border: 1px solid rgba(255, 208, 180, 0.12);
+    border-left: 2px solid rgba(116, 59, 45, 0.88);
+    background: rgba(67, 42, 40, 0.86);
+    box-shadow: 0 14px 38px rgba(67, 36, 30, 0.16);
 }
 
 .fallback-card strong {
     display: block;
-    margin: 7px 0 10px;
-    letter-spacing: 0.09em;
+    margin: 6px 0 9px;
+    color: #fff0e6;
+    font-size: clamp(15px, 1.3vw, 20px);
+    line-height: 1.05;
+    letter-spacing: 0.1em;
+}
+
+.fallback-card .eyebrow {
+    color: rgba(255, 174, 126, 0.66);
 }
 
 .fallback-card p {
     margin: 0;
-    color: rgba(255, 228, 210, 0.68);
-    font-size: 12px;
-    line-height: 1.6;
+    color: rgba(255, 225, 207, 0.7);
+    max-width: 52ch;
+    font-size: clamp(9px, 0.7vw, 11px);
+    line-height: 1.55;
     white-space: pre-wrap;
 }
 
+.fallback-card .fallback-intro {
+    margin-bottom: 7px;
+    color: rgba(255, 235, 222, 0.86);
+}
+
+.fallback-card .fallback-diagnostic {
+    color: rgba(255, 183, 143, 0.62);
+}
+
 @media (max-width: 760px) {
+    .fallback {
+        align-items: start;
+        padding: 24px 18px;
+        padding-top: clamp(60px, 14vh, 110px);
+    }
+
+    .fallback-card {
+        width: 100%;
+        padding: 12px 14px;
+    }
+
     .hud {
         padding: 10px;
     }
