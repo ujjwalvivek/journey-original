@@ -21,6 +21,11 @@ struct Uniforms {
   bridgeColor: vec4f,
   practicalLightColor: vec4f,
   fogColor: vec4f,
+  weatherAtmosphere: vec4f, // x visibility, y horizon haze, z mist, w mist height
+  weatherPrecipitation: vec4f, // x amount, y density, z speed, w streak length
+  weatherDynamics: vec4f, // x rain angle, y wind direction, z gustiness, w wetness
+  weatherTimes: vec4f, // x weather, y precipitation, z gust, w mist
+  weatherSurface: vec4f, // x light scatter, y drying rate
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -91,6 +96,49 @@ fn easeOutBack(tIn: f32) -> f32 {
 fn easeOutCubic(tIn: f32) -> f32 {
   let t = 1.0 - clamp(tIn, 0.0, 1.0);
   return 1.0 - t * t * t;
+}
+
+fn hashRain(cell: vec2f, seed: f32) -> vec2f {
+  let seededCell = cell + vec2f(seed);
+  let p = vec2f(
+    dot(seededCell, vec2f(127.1, 311.7)),
+    dot(seededCell, vec2f(269.5, 183.3))
+  );
+  return fract(sin(p) * 43758.5453);
+}
+
+// Persistent drops move through staggered columns. Randomness changes only in
+// the dry gap between drops, avoiding the synchronized cell reset that made
+// the first rain field visibly rubber-band.
+fn rainField(
+  uvIn: vec2f,
+  time: f32,
+  columns: f32,
+  rows: f32,
+  density: f32,
+  streakLength: f32,
+  speed: f32,
+  slant: f32,
+  seed: f32
+) -> f32 {
+  let columnCoord = (uvIn.x - uvIn.y * slant) * columns;
+  let column = floor(columnCoord);
+  let localX = fract(columnCoord);
+  let columnRandom = hashRain(vec2f(column, seed), seed + 7.3);
+  let fall = uvIn.y * rows + time * speed * rows + columnRandom.y;
+  let band = floor(fall);
+  let along = fract(fall);
+  let dropRandom = hashRain(vec2f(column, band), seed);
+  let enabledDrop = 1.0 - step(clamp(density, 0.0, 0.999), dropRandom.y);
+  let streakX = 0.1 + dropRandom.x * 0.8;
+  let width = mix(0.048, 0.026, clamp(columns / 180.0, 0.0, 1.0));
+  let line = 1.0 - smoothstep(width, width * 2.1, abs(localX - streakX));
+  let lengthJitter = 0.48 + 0.72 * fract(dropRandom.x * 17.13 + dropRandom.y * 7.1);
+  let length = clamp(streakLength * lengthJitter, 0.025, 0.68);
+  let body = 1.0 - smoothstep(length * 0.78, length, along);
+  let head = smoothstep(0.0, min(length * 0.12, 0.045), along);
+  let brightness = 0.45 + 0.55 * fract(dropRandom.x * 5.7 + dropRandom.y * 13.1);
+  return enabledDrop * line * body * head * brightness;
 }
 
 fn wheelMotionMask(pointIn: vec2f, radius: f32, angle: f32) -> f32 {
@@ -309,6 +357,33 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let cloudT = uniforms.travelTime * 3.4 + uniforms.subject.w * 0.6;
   let bg = background(uv, cloudT);
 
+  let precipitation = clamp(uniforms.weatherPrecipitation.x, 0.0, 1.0);
+  let rainDensity = clamp(uniforms.weatherPrecipitation.y, 0.0, 1.0);
+  let rainOccupancy = 1.0 - (1.0 - rainDensity) * (1.0 - rainDensity * 0.65);
+  let downpour = smoothstep(0.58, 0.95, rainDensity);
+  let rainLength = max(uniforms.weatherPrecipitation.w, 0.05);
+  let windDirection = clamp(uniforms.weatherDynamics.y, -1.0, 1.0);
+  let gustStrength = clamp(uniforms.weatherDynamics.z, 0.0, 1.0);
+  let rainSlant = clamp(
+    uniforms.weatherDynamics.x * 0.52 +
+    windDirection * (0.09 + gustStrength * 0.12),
+    -0.72,
+    0.72
+  );
+  let precipitationT = uniforms.weatherTimes.y;
+  let distantRainPrimary = rainField(
+    uv, precipitationT, 82.0, 24.0,
+    rainOccupancy * 0.82, rainLength * 0.18,
+    0.14, rainSlant, 3.7
+  );
+  let distantRainFill = rainField(
+    uv + vec2f(0.004, 0.017), precipitationT, 69.0, 29.0,
+    rainOccupancy * 0.9, rainLength * 0.14,
+    0.17, rainSlant, 11.2
+  ) * downpour;
+  let distantRain = clamp(distantRainPrimary + distantRainFill, 0.0, 1.0) *
+    precipitation * 0.13 * clamp(uniforms.weatherAtmosphere.x + 0.22, 0.0, 1.0);
+
   var fg = vec4f(0.0);
   let n = 5;
   if (uv.y < 0.5) {
@@ -320,7 +395,8 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
     }
   }
 
-  var col = bg.rgb;
+  let distantRainColor = mix(uniforms.fogColor.rgb, uniforms.cloudLight.rgb, 0.42);
+  var col = mix(bg.rgb, distantRainColor, distantRain);
   uv.y -= 0.2;
 
   // The world itself performs the opening: the bridge rises with a slight
@@ -506,20 +582,94 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let bridgeBase = uniforms.bridgeColor.rgb * (1.0 + bridgeLift * 0.3);
   col = mix(bridgeBase * smoothstep(-0.08, 0.08, bridgeUv.y), col, k);
 
+  // Physical atmosphere is resolved independently from the authored scene.
+  // It sits in front of the distant world and subjects, but behind the
+  // nearest cloud field so depth is preserved.
+  let visibilityLoss = 1.0 - clamp(uniforms.weatherAtmosphere.x, 0.0, 1.0);
+  let horizonBand = 1.0 - smoothstep(0.025, 0.38, abs(uv.y - 0.1));
+  let horizonVeil = clamp(
+    uniforms.weatherAtmosphere.y * horizonBand * 0.72 +
+    visibilityLoss * horizonBand * 0.68,
+    0.0,
+    0.82
+  );
+
+  let mistHeight = mix(0.015, 0.19, clamp(uniforms.weatherAtmosphere.w, 0.0, 1.0));
+  let mistWind = mix(-1.0, 1.0, clamp(uniforms.weatherDynamics.y * 0.5 + 0.5, 0.0, 1.0));
+  let mistUv = vec2f(
+    uv.x * 1.8 + uniforms.weatherTimes.w * 0.055 * mistWind,
+    uv.y * 5.2 + uniforms.weatherTimes.x * 0.008
+  );
+  let mistNoise = fbm2(mistUv + vec2f(18.7, 4.3), 5);
+  let mistBand = 1.0 - smoothstep(0.035, 0.24, abs(uv.y - mistHeight));
+  let mistShape = smoothstep(0.38, 0.72, mistNoise) * mistBand;
+  let mistVeil = clamp(
+    mistShape * uniforms.weatherAtmosphere.z * (0.62 + visibilityLoss * 0.28),
+    0.0,
+    0.72
+  );
+  let atmosphericVeil = 1.0 - (1.0 - horizonVeil) * (1.0 - mistVeil);
+  col = mix(col, uniforms.fogColor.rgb, atmosphericVeil);
+
+  // Middle-distance rain crosses subjects and bridge geometry, but the
+  // nearest cloud bank still occludes it. This is the layer that carries most
+  // of the readable weather without flattening the scene.
+  let middleRainPrimary = rainField(
+    uv + vec2f(0.0, 0.013), precipitationT, 124.0, 19.0,
+    rainOccupancy * 0.98, rainLength * 0.3,
+    0.23, rainSlant, 19.4
+  );
+  let middleRainFill = rainField(
+    uv + vec2f(0.007, 0.029), precipitationT, 107.0, 23.0,
+    rainOccupancy * 0.94, rainLength * 0.24,
+    0.29, rainSlant, 28.6
+  ) * downpour;
+  let middleRain = clamp(middleRainPrimary + middleRainFill, 0.0, 1.0) *
+    precipitation * 0.22 * (1.0 - atmosphericVeil * 0.38);
+  let rainLightColor = mix(uniforms.fogColor.rgb, uniforms.practicalLightColor.rgb, 0.18);
+  col = mix(col, rainLightColor, middleRain);
+
   col = mix(col, fg.rgb, fg.a);
 
   let moodUv = fragCoord / uniforms.resolution;
   let fogBand = 1.0 - smoothstep(0.05, 0.42, abs(uv.y - 0.1));
   let fogAmount = clamp(uniforms.motion.z * fogBand, 0.0, 0.78);
   col = mix(col, uniforms.fogColor.rgb, fogAmount);
+
+  // Fast, sparse foreground streaks establish parallax. They are composed in
+  // front of the cloud bank but before grading and practical-light emission.
+  let foregroundRainPrimary = rainField(
+    uv + vec2f(0.0, 0.031), precipitationT, 168.0, 14.0,
+    rainOccupancy * 0.76, rainLength * 0.42,
+    0.38, rainSlant, 41.8
+  );
+  let foregroundRainFill = rainField(
+    uv + vec2f(0.011, 0.043), precipitationT, 143.0, 17.0,
+    rainOccupancy * 0.82, rainLength * 0.34,
+    0.47, rainSlant, 53.1
+  ) * downpour;
+  let foregroundRain = clamp(foregroundRainPrimary + foregroundRainFill, 0.0, 1.0) *
+    precipitation * 0.28;
+  col = mix(col, mix(rainLightColor, uniforms.cloudLight.rgb, 0.16), foregroundRain);
   col = (col - vec3f(0.5)) * uniforms.motion.w + vec3f(0.5);
   col *= uniforms.grade.w;
   col = applyMoodPalette(col, moodUv);
+  // A crisp, desaturated reflection survives palette grading and feedback.
+  // Water borrows scene luminance rather than the mood hue, which keeps rain
+  // legible in warm scenes without turning it into blue neon.
+  let reflectedLight = dot(uniforms.cloudLight.rgb, vec3f(0.2126, 0.7152, 0.0722));
+  let waterSpecularColor = vec3f(reflectedLight * 0.82, reflectedLight * 0.9, reflectedLight);
+  let rainSpecular = clamp(
+    distantRain * 0.28 + middleRain * 0.72 + foregroundRain,
+    0.0,
+    0.42
+  );
   // Emission is added after atmospheric grading so practical lights remain
   // luminous in dark moods. Soft analytic falloff provides bloom without a
   // separate full-resolution blur pass.
   let practicalLightColor = uniforms.practicalLightColor.rgb;
-  let trainLightVisibility = clamp(k * (1.0 - fg.a), 0.0, 1.0);
+  let weatherLightVisibility = 1.0 - atmosphericVeil * 0.58;
+  let trainLightVisibility = clamp(k * (1.0 - fg.a) * weatherLightVisibility, 0.0, 1.0);
   let headlightEmission = trainPresence * clamp(trainLift, 0.0, 1.0) *
     (headlightCore * 1.16 + headlightBloom * 0.48) * trainLightVisibility;
   let beamEmission = trainPresence * clamp(trainLift, 0.0, 1.0) *
@@ -528,7 +678,7 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   col += practicalLightColor * trainEmission * trainLightVisibility;
   col += practicalLightColor * headlightEmission;
   col += practicalLightColor * beamEmission;
-  col += practicalLightColor * bridgeEmission;
+  col += practicalLightColor * bridgeEmission * weatherLightVisibility;
 
   // Shadertoy Buffer A feedback. Because WebGPU render-target textures use a
   // top-left texture origin, flip the Shadertoy-style Y coordinate back when
@@ -536,7 +686,10 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let screenUv = fragCoord / uniforms.resolution;
   let feedbackUv = vec2f(screenUv.x, 1.0 - screenUv.y);
   let previousCol = textureSampleLevel(feedbackTexture, feedbackSampler, feedbackUv, 0.0).rgb;
-  col = mix(col, previousCol, clamp(uniforms.grade.z, 0.0, 0.95));
+  let rainFeedbackRecovery = 1.0 - precipitation * 0.74;
+  col = mix(col, previousCol, clamp(uniforms.grade.z * rainFeedbackRecovery, 0.0, 0.95));
+  col = mix(col, waterSpecularColor, rainSpecular * 0.34);
+  col += waterSpecularColor * rainSpecular * 0.2;
 
   return vec4f(col, 1.0);
 }

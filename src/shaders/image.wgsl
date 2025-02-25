@@ -21,6 +21,11 @@ struct Uniforms {
   bridgeColor: vec4f,
   practicalLightColor: vec4f,
   fogColor: vec4f,
+  weatherAtmosphere: vec4f,
+  weatherPrecipitation: vec4f,
+  weatherDynamics: vec4f,
+  weatherTimes: vec4f,
+  weatherSurface: vec4f,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
