@@ -6,9 +6,15 @@ import { MoodEngine } from "./moodEngine.js";
 import { fitRenderSize } from "./renderBudget.js";
 import { EnvironmentClock } from "./environmentClock.js";
 import { CueTimeline } from "../journey/cueTimeline.js";
+import {
+    WeatherEngine,
+    composeWeather,
+    extractSceneWeather,
+} from "../weather/weatherEngine.js";
+import { WeatherClock } from "../weather/weatherClock.js";
 
 const BUFFER_FORMAT = "rgba16float";
-const UNIFORM_FLOATS = 80;
+const UNIFORM_FLOATS = 100;
 const UNIFORM_BYTES = UNIFORM_FLOATS * 4;
 
 export class JourneyRenderer {
@@ -37,9 +43,20 @@ export class JourneyRenderer {
         this.sourceSampler = null;
 
         this.moodEngine = new MoodEngine();
+        this.weatherEngine = new WeatherEngine();
         this.clock = new EnvironmentClock();
+        this.weatherClock = new WeatherClock();
         this.cueTimeline = new CueTimeline();
-        this.resolvedMood = this.moodEngine.update(performance.now() / 1000);
+        const nowSeconds = performance.now() / 1000;
+        this.resolvedSceneMood = this.moodEngine.update(nowSeconds);
+        this.resolvedWeather = this.weatherEngine.update(
+            nowSeconds,
+            extractSceneWeather(this.resolvedSceneMood),
+        );
+        this.resolvedMood = composeWeather(
+            this.resolvedSceneMood,
+            this.resolvedWeather,
+        );
         this.travelRunning = true;
         this.travelSpeed = 1;
         this.feedbackAmount = 0.3;
@@ -320,6 +337,22 @@ export class JourneyRenderer {
         this.moodEngine.setIntensity(value);
     }
 
+    setWeather(id) {
+        return this.weatherEngine.setWeather(
+            id,
+            performance.now() / 1000,
+            extractSceneWeather(this.resolvedSceneMood),
+        );
+    }
+
+    setWeatherOverride(key, value) {
+        return this.weatherEngine.setOverride(key, value);
+    }
+
+    clearWeatherOverrides() {
+        this.weatherEngine.clearOverrides();
+    }
+
     setAutoMood(enabled) {
         this.moodEngine.setAutoCycle(false);
         const cue = this.cueTimeline.setEnabled(enabled);
@@ -344,6 +377,7 @@ export class JourneyRenderer {
 
     resetJourney() {
         this.clock.reset();
+        this.weatherClock.reset();
         const cue = this.cueTimeline.reset();
         if (this.cueTimeline.enabled) this.moodEngine.setMood(cue.moodId);
         this.clearFeedback();
@@ -359,6 +393,12 @@ export class JourneyRenderer {
             travelTime: this.clock.travelTime,
             windTime: this.clock.windPhase,
             smokeLevel: this.clock.smokeLevel,
+            weatherTime: this.weatherClock.weatherTime,
+            precipitationTime: this.weatherClock.precipitationTime,
+            gustTime: this.weatherClock.gustTime,
+            mistTime: this.weatherClock.mistTime,
+            weatherId: this.weatherEngine.currentId,
+            weather: this.resolvedWeather,
             cueId: this.cueTimeline.current.id,
             cueProgress: this.cueTimeline.elapsedInCue() / this.cueTimeline.current.duration,
             moodId: this.moodEngine.currentId,
@@ -443,6 +483,31 @@ export class JourneyRenderer {
         writeColor(72, mood.practicalLightColor);
         writeColor(76, mood.fogColor);
 
+        this.uniformData[80] = mood.visibility;
+        this.uniformData[81] = mood.horizonHaze;
+        this.uniformData[82] = mood.mistDensity;
+        this.uniformData[83] = mood.mistHeight;
+
+        this.uniformData[84] = mood.precipitation;
+        this.uniformData[85] = mood.rainDensity;
+        this.uniformData[86] = mood.rainSpeed;
+        this.uniformData[87] = mood.rainLength;
+
+        this.uniformData[88] = mood.rainAngle;
+        this.uniformData[89] = mood.windDirection;
+        this.uniformData[90] = mood.gustiness;
+        this.uniformData[91] = mood.wetness;
+
+        this.uniformData[92] = this.weatherClock.weatherTime;
+        this.uniformData[93] = this.weatherClock.precipitationTime;
+        this.uniformData[94] = this.weatherClock.gustTime;
+        this.uniformData[95] = this.weatherClock.mistTime;
+
+        this.uniformData[96] = mood.lightScatter;
+        this.uniformData[97] = mood.dryingRate;
+        this.uniformData[98] = 0;
+        this.uniformData[99] = 0;
+
         this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
     }
 
@@ -475,7 +540,15 @@ export class JourneyRenderer {
             speed: this.travelSpeed,
         });
         if (cueState.changed) this.moodEngine.setMood(cueState.cue.moodId, now / 1000);
-        const mood = this.moodEngine.update(now / 1000);
+        const nowSeconds = now / 1000;
+        const sceneMood = this.moodEngine.update(nowSeconds);
+        const weather = this.weatherEngine.update(
+            nowSeconds,
+            extractSceneWeather(sceneMood),
+        );
+        const mood = composeWeather(sceneMood, weather);
+        this.resolvedSceneMood = sceneMood;
+        this.resolvedWeather = weather;
         const cueTravelScale = this.cueTimeline.enabled
             ? cueState.cue.travelScale
             : 1;
@@ -483,6 +556,12 @@ export class JourneyRenderer {
             travelRunning: this.travelRunning,
             travelSpeed: this.travelSpeed * cueTravelScale,
             windSpeed: mood.windSpeed,
+        });
+        this.weatherClock.advance(delta, {
+            windSpeed: weather.windSpeed,
+            gustiness: weather.gustiness,
+            precipitation: weather.precipitation,
+            rainSpeed: weather.rainSpeed,
         });
         this.writeUniforms(mood);
 
