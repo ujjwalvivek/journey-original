@@ -7,6 +7,16 @@ import {
     AUTHORING_CONTROLS,
     MOODS,
 } from "./webgpu/moodEngine.js";
+import {
+    LEGACY_WEATHER_KEYS,
+    RENDERED_WEATHER_CONTROLS,
+    WEATHER_CONTROLS,
+    WEATHER_PRESETS,
+} from "./weather/weatherEngine.js";
+
+const MOOD_ONLY_CONTROLS = AUTHORING_CONTROLS.filter(
+    ({ key }) => !LEGACY_WEATHER_KEYS.includes(key),
+);
 
 const canvas = ref(null);
 const fallbackCanvas = ref(null);
@@ -20,6 +30,8 @@ const travelRunning = ref(true);
 const travelSpeed = ref(1);
 const moodId = ref("departure");
 const sceneMenuOpen = ref(false);
+const weatherId = ref("scene");
+const weatherMenuOpen = ref(false);
 const moodIntensity = ref(1);
 const autoMood = ref(false);
 const feedbackAmount = ref(0.3);
@@ -28,11 +40,12 @@ const fps = ref(0);
 const renderSize = ref("-");
 const renderScale = ref(1);
 const travelTime = ref(0);
-const windTime = ref(0);
+const weatherTime = ref(0);
 const cueId = ref("departure");
 const cueProgress = ref(0);
 const authoringValues = ref({});
 const authoringColors = ref({});
+const weatherValues = ref({});
 const copyStatus = ref("COPY STATE");
 
 let renderer = null;
@@ -47,6 +60,9 @@ const statusLabel = computed(() =>
 );
 const selectedMoodName = computed(
     () => MOODS.find((mood) => mood.id === moodId.value)?.name ?? "-",
+);
+const selectedWeatherName = computed(
+    () => WEATHER_PRESETS.find((weather) => weather.id === weatherId.value)?.name ?? "-",
 );
 
 function toggleTravel() {
@@ -66,6 +82,7 @@ function nextMood() {
 
 function togglePanel(panel) {
     sceneMenuOpen.value = false;
+    weatherMenuOpen.value = false;
     hudVisible.value = true;
     activePanel.value = activePanel.value === panel ? null : panel;
 }
@@ -75,6 +92,7 @@ function hideHud(event) {
     railCanReveal.value = !event;
     activePanel.value = null;
     sceneMenuOpen.value = false;
+    weatherMenuOpen.value = false;
     event?.currentTarget?.blur();
 }
 
@@ -84,9 +102,20 @@ function selectScene(id) {
     sceneMenuOpen.value = false;
 }
 
+function selectWeather(id) {
+    weatherId.value = id;
+    weatherMenuOpen.value = false;
+}
+
 function closeSceneMenu(event) {
     if (!event.currentTarget.contains(event.relatedTarget)) {
         sceneMenuOpen.value = false;
+    }
+}
+
+function closeWeatherMenu(event) {
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+        weatherMenuOpen.value = false;
     }
 }
 
@@ -126,6 +155,10 @@ function overrideMood(key, value) {
     renderer?.setMoodOverride(key, value);
 }
 
+function overrideWeather(key, value) {
+    renderer?.setWeatherOverride(key, value);
+}
+
 function colorToHex(color) {
     if (!Array.isArray(color)) return "#000000";
     return `#${color
@@ -152,8 +185,14 @@ function clearMoodOverrides() {
     renderer?.clearMoodOverrides();
 }
 
+function clearAuthoringOverrides() {
+    clearMoodOverrides();
+    renderer?.clearWeatherOverrides();
+}
+
 async function copyMoodState() {
-    const mood = renderer?.getStats().mood;
+    const stats = renderer?.getStats();
+    const mood = stats?.mood;
     if (!mood) return;
     const snapshot = {
         id: mood.id,
@@ -168,11 +207,20 @@ async function copyMoodState() {
             ]),
         ),
         world: Object.fromEntries(
-            AUTHORING_CONTROLS.map(({ key }) => [
+            MOOD_ONLY_CONTROLS.map(({ key }) => [
                 key,
                 Number(mood[key].toFixed(4)),
             ]),
         ),
+        weather: {
+            id: stats.weatherId,
+            state: Object.fromEntries(
+                WEATHER_CONTROLS.map(({ key }) => [
+                    key,
+                    Number(stats.weather[key].toFixed(4)),
+                ]),
+            ),
+        },
     };
 
     try {
@@ -207,6 +255,7 @@ function onKeydown(event) {
             setFallbackPreview(false);
         }
         sceneMenuOpen.value = false;
+        weatherMenuOpen.value = false;
         activePanel.value = null;
     }
 }
@@ -216,6 +265,9 @@ watch(moodId, (value) => {
     if (renderer?.getStats().moodId !== value) renderer?.setMood(value);
 });
 watch(moodIntensity, (value) => renderer?.setMoodIntensity(value));
+watch(weatherId, (value) => {
+    if (renderer?.getStats().weatherId !== value) renderer?.setWeather(value);
+});
 watch(autoMood, (value) => renderer?.setAutoMood(value));
 watch(feedbackAmount, (value) => renderer?.setFeedbackAmount(value));
 watch(vignetteStrength, (value) => renderer?.setVignetteStrength(value));
@@ -239,6 +291,7 @@ onMounted(async () => {
         renderer.setTravelSpeed(travelSpeed.value);
         renderer.setMood(moodId.value);
         renderer.setMoodIntensity(moodIntensity.value);
+        renderer.setWeather(weatherId.value);
         renderer.setAutoMood(autoMood.value);
         renderer.setFeedbackAmount(feedbackAmount.value);
         renderer.setVignetteStrength(vignetteStrength.value);
@@ -252,12 +305,15 @@ onMounted(async () => {
             renderSize.value = `${stats.width}×${stats.height}`;
             renderScale.value = stats.renderBudgetScale;
             travelTime.value = stats.travelTime;
-            windTime.value = stats.windTime;
+            weatherTime.value = stats.weatherTime;
             cueId.value = stats.cueId;
             cueProgress.value = stats.cueProgress;
             travelRunning.value = stats.travelRunning;
             authoringValues.value = Object.fromEntries(
-                AUTHORING_CONTROLS.map(({ key }) => [key, stats.mood[key]]),
+                MOOD_ONLY_CONTROLS.map(({ key }) => [key, stats.mood[key]]),
+            );
+            weatherValues.value = Object.fromEntries(
+                RENDERED_WEATHER_CONTROLS.map(({ key }) => [key, stats.weather[key]]),
             );
             authoringColors.value = Object.fromEntries(
                 AUTHORING_COLORS.map(({ key }) => [
@@ -267,6 +323,8 @@ onMounted(async () => {
             );
             if (autoMood.value && stats.moodId !== moodId.value)
                 moodId.value = stats.moodId;
+            if (stats.weatherId !== weatherId.value)
+                weatherId.value = stats.weatherId;
         }, 300);
 
         window.addEventListener("keydown", onKeydown);
@@ -472,7 +530,10 @@ onBeforeUnmount(() => {
                                         type="button"
                                         aria-haspopup="listbox"
                                         :aria-expanded="sceneMenuOpen"
-                                        @click="sceneMenuOpen = !sceneMenuOpen"
+                                        @click="
+                                            weatherMenuOpen = false;
+                                            sceneMenuOpen = !sceneMenuOpen;
+                                        "
                                     >
                                         <span>{{ selectedMoodName }}</span
                                         ><i aria-hidden="true"></i>
@@ -497,6 +558,48 @@ onBeforeUnmount(() => {
                                                 @click="selectScene(mood.id)"
                                             >
                                                 {{ mood.name }}
+                                            </button>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+                            <div class="select-row">
+                                <span>Physical weather</span>
+                                <div
+                                    class="scene-select"
+                                    @focusout="closeWeatherMenu"
+                                >
+                                    <button
+                                        class="scene-select-trigger"
+                                        type="button"
+                                        aria-haspopup="listbox"
+                                        :aria-expanded="weatherMenuOpen"
+                                        @click="
+                                            sceneMenuOpen = false;
+                                            weatherMenuOpen = !weatherMenuOpen;
+                                        "
+                                    >
+                                        <span>{{ selectedWeatherName }}</span
+                                        ><i aria-hidden="true"></i>
+                                    </button>
+                                    <ul
+                                        v-if="weatherMenuOpen"
+                                        class="scene-options"
+                                        role="listbox"
+                                        aria-label="Physical weather"
+                                        @wheel.stop
+                                    >
+                                        <li
+                                            v-for="weather in WEATHER_PRESETS"
+                                            :key="weather.id"
+                                        >
+                                            <button
+                                                type="button"
+                                                role="option"
+                                                :aria-selected="weather.id === weatherId"
+                                                @click="selectWeather(weather.id)"
+                                            >
+                                                {{ weather.name }}
                                             </button>
                                         </li>
                                     </ul>
@@ -616,10 +719,14 @@ onBeforeUnmount(() => {
                         >
                             <div class="drawer-heading">
                                 <span>04 / MOOD LAB</span>
-                                <span>W {{ windTime.toFixed(1) }}</span>
+                                <span>WX {{ weatherTime.toFixed(1) }}</span>
+                            </div>
+                            <div class="lab-section-heading">
+                                <span>SCENE</span>
+                                <small>PALETTE · SUBJECT · GRADE</small>
                             </div>
                             <label
-                                v-for="control in AUTHORING_CONTROLS"
+                                v-for="control in MOOD_ONLY_CONTROLS"
                                 :key="control.key"
                                 class="range-row compact-row"
                             >
@@ -650,6 +757,33 @@ onBeforeUnmount(() => {
                                     "
                                 />
                             </label>
+                            <div class="lab-section-heading">
+                                <span>WEATHER</span>
+                                <small>{{ selectedWeatherName }}</small>
+                            </div>
+                            <label
+                                v-for="control in RENDERED_WEATHER_CONTROLS"
+                                :key="control.key"
+                                class="range-row compact-row"
+                            >
+                                <span
+                                    >{{ control.label }}
+                                    <output>{{
+                                        weatherValues[control.key]?.toFixed(2) ?? "-"
+                                    }}</output></span
+                                >
+                                <input
+                                    v-model.number="weatherValues[control.key]"
+                                    type="range"
+                                    :min="control.min"
+                                    :max="control.max"
+                                    :step="control.step"
+                                    :style="{
+                                        '--range-progress': `${((weatherValues[control.key] - control.min) / (control.max - control.min)) * 100}%`,
+                                    }"
+                                    @input="overrideWeather(control.key, weatherValues[control.key])"
+                                />
+                            </label>
                             <div
                                 class="color-grid"
                                 aria-label="Authored scene colors"
@@ -675,7 +809,7 @@ onBeforeUnmount(() => {
                             <div class="button-row sticky-actions">
                                 <button
                                     type="button"
-                                    @click="clearMoodOverrides"
+                                    @click="clearAuthoringOverrides"
                                 >
                                     CLEAR OVERRIDES
                                 </button>
