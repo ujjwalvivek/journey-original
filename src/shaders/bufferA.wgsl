@@ -386,7 +386,18 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
 
   var fg = vec4f(0.0);
   let n = 5;
-  if (uv.y < 0.5) {
+  // The old fixed 0.5 cutoff saved FBM work, but taller/denser authored cloud
+  // states could cross it and expose a flat clipped top. Expand the sampled
+  // region only when weather parameters can actually raise those peaks.
+  let foregroundCeiling = clamp(
+    0.5 +
+    max(uniforms.atmosphere.y, 0.0) +
+    max(uniforms.atmosphere.x, 0.0) * 0.58 +
+    max(uniforms.atmosphere.w - 1.0, 0.0) * 0.1,
+    0.5,
+    0.82
+  );
+  if (uv.y < foregroundCeiling) {
     var i = 0;
     loop {
       if (i >= n) { break; }
