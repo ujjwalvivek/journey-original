@@ -120,6 +120,9 @@ export const RENDERED_WEATHER_CONTROLS = Object.freeze(
             "rainSpeed",
             "rainLength",
             "rainAngle",
+            "wetness",
+            "lightScatter",
+            "dryingRate",
         ].includes(key),
     ),
 );

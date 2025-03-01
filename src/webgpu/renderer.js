@@ -397,6 +397,7 @@ export class JourneyRenderer {
             precipitationTime: this.weatherClock.precipitationTime,
             gustTime: this.weatherClock.gustTime,
             mistTime: this.weatherClock.mistTime,
+            surfaceWetness: this.weatherClock.surfaceWetness,
             weatherId: this.weatherEngine.currentId,
             weather: this.resolvedWeather,
             cueId: this.cueTimeline.current.id,
@@ -546,8 +547,22 @@ export class JourneyRenderer {
             nowSeconds,
             extractSceneWeather(sceneMood),
         );
-        const mood = composeWeather(sceneMood, weather);
         this.resolvedSceneMood = sceneMood;
+        this.weatherClock.advance(delta, {
+            windSpeed: weather.windSpeed,
+            gustiness: weather.gustiness,
+            precipitation: weather.precipitation,
+            rainSpeed: weather.rainSpeed,
+            wetness: weather.wetness,
+            dryingRate: weather.dryingRate,
+        });
+        const renderedWeather = {
+            ...weather,
+            wetness: this.weatherClock.surfaceWetness,
+        };
+        const mood = composeWeather(sceneMood, renderedWeather);
+        // Keep authored weather targets stable for controls/export. The shader
+        // receives renderedWeather, whose wetness is the physical integrator.
         this.resolvedWeather = weather;
         const cueTravelScale = this.cueTimeline.enabled
             ? cueState.cue.travelScale
@@ -556,12 +571,6 @@ export class JourneyRenderer {
             travelRunning: this.travelRunning,
             travelSpeed: this.travelSpeed * cueTravelScale,
             windSpeed: mood.windSpeed,
-        });
-        this.weatherClock.advance(delta, {
-            windSpeed: weather.windSpeed,
-            gustiness: weather.gustiness,
-            precipitation: weather.precipitation,
-            rainSpeed: weather.rainSpeed,
         });
         this.writeUniforms(mood);
 
