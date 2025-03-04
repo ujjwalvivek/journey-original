@@ -459,9 +459,14 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   }
 
   let trainLift = uniforms.subject.x;
-  let trainDark = uniforms.trainDarkColor.rgb * (1.0 + clamp(trainLift, 0.0, 1.0) * 0.12);
-  let trainBody = uniforms.trainBodyColor.rgb * (1.0 + clamp(trainLift, 0.0, 1.0) * 0.1);
-  let locomotive = uniforms.locomotiveColor.rgb * (1.0 + clamp(trainLift, 0.0, 1.0) * 0.1);
+  let surfaceWetness = clamp(uniforms.weatherDynamics.w, 0.0, 1.0);
+  let wetMaterialDarkening = 1.0 - surfaceWetness * 0.16;
+  let trainDark = uniforms.trainDarkColor.rgb * wetMaterialDarkening *
+    (1.0 + clamp(trainLift, 0.0, 1.0) * 0.12);
+  let trainBody = uniforms.trainBodyColor.rgb * wetMaterialDarkening *
+    (1.0 + clamp(trainLift, 0.0, 1.0) * 0.1);
+  let locomotive = uniforms.locomotiveColor.rgb * wetMaterialDarkening *
+    (1.0 + clamp(trainLift, 0.0, 1.0) * 0.1);
   col = mix(col, trainDark, join);
   col = mix(col, trainBody, wagon);
   col = mix(col, trainDark, roof);
@@ -507,6 +512,16 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let roofEdgeCore = roofEdgeRegion *
     (1.0 - smoothstep(0.00018, 0.00062, abs(trainUv.y - 0.11645)));
   let roofEdgeBloom = roofEdgeRegion * exp(-abs(trainUv.y - 0.11645) * 760.0);
+  // Wet response must sit on the same physical edge as the roof light. A
+  // lower parallel line read as detached scattering, while the previous
+  // locomotive mask extended the highlight across the whole engine.
+  let carriageWetEdge = roofEdgeRegion *
+    (1.0 - smoothstep(0.0003, 0.0012, abs(trainUv.y - 0.11645)));
+  let locomotiveWetEdge = boxMask(trainUv, 0.443, 0.47, 0.1135, 0.12) *
+    (1.0 - smoothstep(0.0003, 0.00115, abs(trainUv.y - 0.117)));
+  let trainWetShimmer = 0.7 + 0.3 * sin(trainUv.x * 173.0 + uniforms.weatherTimes.x * 0.42);
+  let trainWetSpecular = surfaceWetness * trainPresence * trainWetShimmer *
+    (carriageWetEdge * 0.72 + locomotiveWetEdge * 0.58);
 
   let headlightDistance = length(trainUv - headlightOrigin);
   let headlightCore = wheelOcclusion * (1.0 - smoothstep(0.0015, 0.0032, headlightDistance));
@@ -590,7 +605,16 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
     undersideCorner * bridgeSurface * 0.62 +
     cornerBloom * 0.16
   );
-  let bridgeBase = uniforms.bridgeColor.rgb * (1.0 + bridgeLift * 0.3);
+  let bridgeWetCurve = bridgeSurface *
+    (1.0 - smoothstep(0.00045, 0.0021, abs(bridgeUv.y - bridgeDeckY)));
+  let bridgeWetDeck = bridgeSurface *
+    (1.0 - smoothstep(0.00045, 0.0018, abs(bridgeUv.y - 0.101)));
+  let bridgeWetShimmer = 0.72 + 0.28 *
+    sin(uv2.x * 94.0 + uniforms.weatherTimes.x * 0.31);
+  let bridgeWetSpecular = surfaceWetness * bridgeWetShimmer *
+    (bridgeWetCurve * 0.54 + bridgeWetDeck * 0.76);
+  let bridgeBase = uniforms.bridgeColor.rgb * wetMaterialDarkening *
+    (1.0 + bridgeLift * 0.3);
   col = mix(bridgeBase * smoothstep(-0.08, 0.08, bridgeUv.y), col, k);
 
   // Physical atmosphere is resolved independently from the authored scene.
@@ -679,6 +703,7 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   // luminous in dark moods. Soft analytic falloff provides bloom without a
   // separate full-resolution blur pass.
   let practicalLightColor = uniforms.practicalLightColor.rgb;
+  let scatterLightColor = mix(practicalLightColor, vec3f(1.0), 0.22);
   let weatherLightVisibility = 1.0 - atmosphericVeil * 0.58;
   let trainLightVisibility = clamp(k * (1.0 - fg.a) * weatherLightVisibility, 0.0, 1.0);
   let headlightEmission = trainPresence * clamp(trainLift, 0.0, 1.0) *
@@ -690,6 +715,14 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   col += practicalLightColor * headlightEmission;
   col += practicalLightColor * beamEmission;
   col += practicalLightColor * bridgeEmission * weatherLightVisibility;
+  let moistureScatter = clamp(uniforms.weatherSurface.x, 0.0, 1.0) *
+    max(surfaceWetness, precipitation * 0.64);
+  let scatteredPracticalLight =
+    trainPresence * clamp(trainLift, 0.0, 1.0) *
+      (windowBloom * 0.24 + driverWindowBloom * 0.2 +
+       headlightBloom * 0.44 + headlightBeamGlow * 0.09) * trainLightVisibility +
+    bridgeEmission * weatherLightVisibility * 0.22;
+  col += scatterLightColor * scatteredPracticalLight * moistureScatter * 0.32;
 
   // Shadertoy Buffer A feedback. Because WebGPU render-target textures use a
   // top-left texture origin, flip the Shadertoy-style Y coordinate back when
@@ -701,6 +734,11 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   col = mix(col, previousCol, clamp(uniforms.grade.z * rainFeedbackRecovery, 0.0, 0.95));
   col = mix(col, waterSpecularColor, rainSpecular * 0.34);
   col += waterSpecularColor * rainSpecular * 0.2;
+  let wetSurfaceVisibility = (1.0 - fg.a) * weatherLightVisibility;
+  let wetSurfaceSpecular =
+    trainWetSpecular * k * wetSurfaceVisibility +
+    bridgeWetSpecular * wetSurfaceVisibility;
+  col += waterSpecularColor * wetSurfaceSpecular * (0.12 + moistureScatter * 0.12);
 
   return vec4f(col, 1.0);
 }
