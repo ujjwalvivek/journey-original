@@ -30,9 +30,10 @@ test("the weather lab exposes only shader-backed controls", () => {
         "rainSpeed",
         "rainLength",
         "rainAngle",
+        "wetness",
+        "lightScatter",
+        "dryingRate",
     ]) assert.equal(renderedKeys.has(key), true, key);
-    for (const key of ["wetness", "lightScatter", "dryingRate"])
-        assert.equal(renderedKeys.has(key), false, key);
 });
 
 test("authored-scene weather mode is an exact pass-through", () => {

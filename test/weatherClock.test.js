@@ -32,3 +32,30 @@ test("precipitation amount never changes rain velocity", () => {
     stormClock.advance(0.1, { precipitation: 1, rainSpeed: 1.7 });
     assert.equal(dryClock.precipitationTime, stormClock.precipitationTime);
 });
+
+test("surfaces absorb precipitation and dry at the authored rate", () => {
+    const clock = new WeatherClock();
+    for (let frame = 0; frame < 20; frame += 1)
+        clock.advance(0.1, { precipitation: 1, wetness: 0 });
+    const soaked = clock.surfaceWetness;
+    assert.ok(soaked > 0.8 && soaked <= 0.92);
+    for (let frame = 0; frame < 10; frame += 1)
+        clock.advance(0.1, {
+            precipitation: 0,
+            wetness: 0,
+            dryingRate: 0.2,
+        });
+    assert.ok(Math.abs(clock.surfaceWetness - (soaked - 0.2)) < 1e-12);
+});
+
+test("authored residual wetness is a drying floor", () => {
+    const clock = new WeatherClock();
+    clock.surfaceWetness = 0.8;
+    for (let frame = 0; frame < 20; frame += 1)
+        clock.advance(0.1, {
+            precipitation: 0,
+            wetness: 0.62,
+            dryingRate: 0.5,
+        });
+    assert.equal(clock.surfaceWetness, 0.62);
+});
