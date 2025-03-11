@@ -67,6 +67,76 @@ export const WEATHER_CONTROLS = Object.freeze([
     },
 ]);
 
+const controlsFor = (keys) =>
+    Object.freeze(
+        keys.map((key) => WEATHER_CONTROLS.find((control) => control.key === key)),
+    );
+
+export const WEATHER_CONTROL_GROUPS = Object.freeze([
+    Object.freeze({
+        id: "clouds",
+        name: "Cloud field",
+        controls: controlsFor([
+            "cloudCoverage",
+            "cloudHeight",
+            "cloudScale",
+            "turbulence",
+        ]),
+    }),
+    Object.freeze({
+        id: "air",
+        name: "Air & visibility",
+        controls: controlsFor([
+            "windSpeed",
+            "windDirection",
+            "gustiness",
+            "smokeAmount",
+            "fogDensity",
+            "visibility",
+            "horizonHaze",
+            "mistDensity",
+            "mistHeight",
+        ]),
+    }),
+    Object.freeze({
+        id: "rain",
+        name: "Precipitation",
+        controls: controlsFor([
+            "precipitation",
+            "rainDensity",
+            "rainSpeed",
+            "rainLength",
+            "rainAngle",
+        ]),
+    }),
+    Object.freeze({
+        id: "surface",
+        name: "Surface response",
+        controls: controlsFor(["wetness", "lightScatter", "dryingRate"]),
+    }),
+]);
+
+export const WEATHER_QUALITY_MODES = Object.freeze([
+    Object.freeze({
+        id: "efficient",
+        name: "Efficient",
+        value: 0,
+        maxPixels: 1280 * 720,
+    }),
+    Object.freeze({
+        id: "balanced",
+        name: "Balanced",
+        value: 1,
+        maxPixels: 1920 * 1080,
+    }),
+    Object.freeze({
+        id: "cinematic",
+        name: "Cinematic",
+        value: 2,
+        maxPixels: 2560 * 1440,
+    }),
+]);
+
 const CONTROL_BY_KEY = new Map(
     WEATHER_CONTROLS.map((control) => [control.key, control]),
 );
