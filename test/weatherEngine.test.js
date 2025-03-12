@@ -3,7 +3,9 @@ import test from "node:test";
 import {
     BASE_WEATHER,
     RENDERED_WEATHER_CONTROLS,
+    WEATHER_CONTROL_GROUPS,
     WEATHER_PRESETS,
+    WEATHER_QUALITY_MODES,
     WEATHER_STATE_KEYS,
     WeatherEngine,
     composeWeather,
@@ -34,6 +36,27 @@ test("the weather lab exposes only shader-backed controls", () => {
         "lightScatter",
         "dryingRate",
     ]) assert.equal(renderedKeys.has(key), true, key);
+});
+
+test("weather lab groups cover every physical control exactly once", () => {
+    const groupedKeys = WEATHER_CONTROL_GROUPS.flatMap(({ controls }) =>
+        controls.map(({ key }) => key),
+    );
+    assert.equal(groupedKeys.length, WEATHER_STATE_KEYS.length);
+    assert.deepEqual(new Set(groupedKeys), new Set(WEATHER_STATE_KEYS));
+});
+
+test("performance modes increase both pixel and rain budgets", () => {
+    assert.deepEqual(
+        WEATHER_QUALITY_MODES.map(({ value }) => value),
+        [0, 1, 2],
+    );
+    assert.ok(
+        WEATHER_QUALITY_MODES[0].maxPixels < WEATHER_QUALITY_MODES[1].maxPixels,
+    );
+    assert.ok(
+        WEATHER_QUALITY_MODES[1].maxPixels < WEATHER_QUALITY_MODES[2].maxPixels,
+    );
 });
 
 test("authored-scene weather mode is an exact pass-through", () => {
