@@ -8,10 +8,12 @@ import { EnvironmentClock } from "./environmentClock.js";
 import { CueTimeline } from "../journey/cueTimeline.js";
 import {
     WeatherEngine,
+    WEATHER_QUALITY_MODES,
     composeWeather,
     extractSceneWeather,
 } from "../weather/weatherEngine.js";
 import { WeatherClock } from "../weather/weatherClock.js";
+import { WeatherFront } from "../weather/weatherFront.js";
 
 const BUFFER_FORMAT = "rgba16float";
 const UNIFORM_FLOATS = 100;
@@ -43,14 +45,18 @@ export class JourneyRenderer {
         this.sourceSampler = null;
 
         this.moodEngine = new MoodEngine();
-        this.weatherEngine = new WeatherEngine();
+        this.weatherEngine = new WeatherEngine(0);
         this.clock = new EnvironmentClock();
         this.weatherClock = new WeatherClock();
+        this.weatherFront = new WeatherFront();
+        this.weatherStateTime = 0;
+        this.weatherFrozen = false;
+        this.weatherQuality = "cinematic";
         this.cueTimeline = new CueTimeline();
         const nowSeconds = performance.now() / 1000;
         this.resolvedSceneMood = this.moodEngine.update(nowSeconds);
         this.resolvedWeather = this.weatherEngine.update(
-            nowSeconds,
+            this.weatherStateTime,
             extractSceneWeather(this.resolvedSceneMood),
         );
         this.resolvedMood = composeWeather(
@@ -214,6 +220,10 @@ export class JourneyRenderer {
             cssHeight: this.canvas.clientHeight,
             devicePixelRatio: window.devicePixelRatio || 1,
             maxDimension: this.device.limits.maxTextureDimension2D,
+            maxPixels:
+                WEATHER_QUALITY_MODES.find(
+                    ({ id }) => id === this.weatherQuality,
+                )?.maxPixels,
         });
         const { width, height } = renderSize;
         this.renderBudgetScale = renderSize.budgetScale;
@@ -338,11 +348,38 @@ export class JourneyRenderer {
     }
 
     setWeather(id) {
+        this.weatherFront.setEnabled(false);
         return this.weatherEngine.setWeather(
             id,
-            performance.now() / 1000,
+            this.weatherStateTime,
             extractSceneWeather(this.resolvedSceneMood),
         );
+    }
+
+    setWeatherFront(id) {
+        return this.weatherFront.setFront(id);
+    }
+
+    setWeatherFrontEnabled(enabled) {
+        return this.weatherFront.setEnabled(enabled);
+    }
+
+    nextWeatherFrontStage() {
+        return this.weatherFront.next();
+    }
+
+    setWeatherFrozen(frozen) {
+        this.weatherFrozen = Boolean(frozen);
+        return this.weatherFrozen;
+    }
+
+    setWeatherQuality(id) {
+        const quality =
+            WEATHER_QUALITY_MODES.find((mode) => mode.id === id) ??
+            WEATHER_QUALITY_MODES.at(-1);
+        this.weatherQuality = quality.id;
+        this.resize(true);
+        return this.weatherQuality;
     }
 
     setWeatherOverride(key, value) {
@@ -398,6 +435,9 @@ export class JourneyRenderer {
             gustTime: this.weatherClock.gustTime,
             mistTime: this.weatherClock.mistTime,
             surfaceWetness: this.weatherClock.surfaceWetness,
+            weatherFrozen: this.weatherFrozen,
+            weatherQuality: this.weatherQuality,
+            weatherFront: this.weatherFront.getState(),
             weatherId: this.weatherEngine.currentId,
             weather: this.resolvedWeather,
             cueId: this.cueTimeline.current.id,
@@ -506,7 +546,10 @@ export class JourneyRenderer {
 
         this.uniformData[96] = mood.lightScatter;
         this.uniformData[97] = mood.dryingRate;
-        this.uniformData[98] = 0;
+        this.uniformData[98] =
+            WEATHER_QUALITY_MODES.find(
+                ({ id }) => id === this.weatherQuality,
+            )?.value ?? 2;
         this.uniformData[99] = 0;
 
         this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
@@ -543,12 +586,23 @@ export class JourneyRenderer {
         if (cueState.changed) this.moodEngine.setMood(cueState.cue.moodId, now / 1000);
         const nowSeconds = now / 1000;
         const sceneMood = this.moodEngine.update(nowSeconds);
+        if (!this.weatherFrozen) this.weatherStateTime += delta;
+        const frontState = this.weatherFrozen
+            ? { changed: false }
+            : this.weatherFront.advance(delta);
+        if (frontState.changed) {
+            this.weatherEngine.setWeather(
+                frontState.stage.weatherId,
+                this.weatherStateTime,
+                extractSceneWeather(sceneMood),
+            );
+        }
         const weather = this.weatherEngine.update(
-            nowSeconds,
+            this.weatherStateTime,
             extractSceneWeather(sceneMood),
         );
         this.resolvedSceneMood = sceneMood;
-        this.weatherClock.advance(delta, {
+        this.weatherClock.advance(this.weatherFrozen ? 0 : delta, {
             windSpeed: weather.windSpeed,
             gustiness: weather.gustiness,
             precipitation: weather.precipitation,
