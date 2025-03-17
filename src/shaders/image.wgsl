@@ -25,7 +25,7 @@ struct Uniforms {
   weatherPrecipitation: vec4f,
   weatherDynamics: vec4f,
   weatherTimes: vec4f,
-  weatherSurface: vec4f,
+  weatherSurface: vec4f, // x light scatter, y drying rate, z rain quality
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;

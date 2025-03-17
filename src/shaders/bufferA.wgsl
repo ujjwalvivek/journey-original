@@ -25,7 +25,7 @@ struct Uniforms {
   weatherPrecipitation: vec4f, // x amount, y density, z speed, w streak length
   weatherDynamics: vec4f, // x rain angle, y wind direction, z gustiness, w wetness
   weatherTimes: vec4f, // x weather, y precipitation, z gust, w mist
-  weatherSurface: vec4f, // x light scatter, y drying rate
+  weatherSurface: vec4f, // x light scatter, y drying rate, z rain quality
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -371,16 +371,20 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
     0.72
   );
   let precipitationT = uniforms.weatherTimes.y;
+  let rainQuality = clamp(uniforms.weatherSurface.z, 0.0, 2.0);
   let distantRainPrimary = rainField(
     uv, precipitationT, 82.0, 24.0,
     rainOccupancy * 0.82, rainLength * 0.18,
     0.14, rainSlant, 3.7
   );
-  let distantRainFill = rainField(
-    uv + vec2f(0.004, 0.017), precipitationT, 69.0, 29.0,
-    rainOccupancy * 0.9, rainLength * 0.14,
-    0.17, rainSlant, 11.2
-  ) * downpour;
+  var distantRainFill = 0.0;
+  if (rainQuality > 1.5 && downpour > 0.001) {
+    distantRainFill = rainField(
+      uv + vec2f(0.004, 0.017), precipitationT, 69.0, 29.0,
+      rainOccupancy * 0.9, rainLength * 0.14,
+      0.17, rainSlant, 11.2
+    ) * downpour;
+  }
   let distantRain = clamp(distantRainPrimary + distantRainFill, 0.0, 1.0) *
     precipitation * 0.13 * clamp(uniforms.weatherAtmosphere.x + 0.22, 0.0, 1.0);
 
@@ -654,11 +658,14 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
     rainOccupancy * 0.98, rainLength * 0.3,
     0.23, rainSlant, 19.4
   );
-  let middleRainFill = rainField(
-    uv + vec2f(0.007, 0.029), precipitationT, 107.0, 23.0,
-    rainOccupancy * 0.94, rainLength * 0.24,
-    0.29, rainSlant, 28.6
-  ) * downpour;
+  var middleRainFill = 0.0;
+  if (rainQuality > 1.5 && downpour > 0.001) {
+    middleRainFill = rainField(
+      uv + vec2f(0.007, 0.029), precipitationT, 107.0, 23.0,
+      rainOccupancy * 0.94, rainLength * 0.24,
+      0.29, rainSlant, 28.6
+    ) * downpour;
+  }
   let middleRain = clamp(middleRainPrimary + middleRainFill, 0.0, 1.0) *
     precipitation * 0.22 * (1.0 - atmosphericVeil * 0.38);
   let rainLightColor = mix(uniforms.fogColor.rgb, uniforms.practicalLightColor.rgb, 0.18);
@@ -673,16 +680,22 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
 
   // Fast, sparse foreground streaks establish parallax. They are composed in
   // front of the cloud bank but before grading and practical-light emission.
-  let foregroundRainPrimary = rainField(
-    uv + vec2f(0.0, 0.031), precipitationT, 168.0, 14.0,
-    rainOccupancy * 0.76, rainLength * 0.42,
-    0.38, rainSlant, 41.8
-  );
-  let foregroundRainFill = rainField(
-    uv + vec2f(0.011, 0.043), precipitationT, 143.0, 17.0,
-    rainOccupancy * 0.82, rainLength * 0.34,
-    0.47, rainSlant, 53.1
-  ) * downpour;
+  var foregroundRainPrimary = 0.0;
+  if (rainQuality > 0.5) {
+    foregroundRainPrimary = rainField(
+      uv + vec2f(0.0, 0.031), precipitationT, 168.0, 14.0,
+      rainOccupancy * 0.76, rainLength * 0.42,
+      0.38, rainSlant, 41.8
+    );
+  }
+  var foregroundRainFill = 0.0;
+  if (rainQuality > 1.5 && downpour > 0.001) {
+    foregroundRainFill = rainField(
+      uv + vec2f(0.011, 0.043), precipitationT, 143.0, 17.0,
+      rainOccupancy * 0.82, rainLength * 0.34,
+      0.47, rainSlant, 53.1
+    ) * downpour;
+  }
   let foregroundRain = clamp(foregroundRainPrimary + foregroundRainFill, 0.0, 1.0) *
     precipitation * 0.28;
   col = mix(col, mix(rainLightColor, uniforms.cloudLight.rgb, 0.16), foregroundRain);
