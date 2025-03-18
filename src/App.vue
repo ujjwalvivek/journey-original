@@ -10,9 +10,12 @@ import {
 import {
     LEGACY_WEATHER_KEYS,
     RENDERED_WEATHER_CONTROLS,
+    WEATHER_CONTROL_GROUPS,
     WEATHER_CONTROLS,
     WEATHER_PRESETS,
+    WEATHER_QUALITY_MODES,
 } from "./weather/weatherEngine.js";
+import { WEATHER_FRONTS } from "./weather/weatherFront.js";
 
 const MOOD_ONLY_CONTROLS = AUTHORING_CONTROLS.filter(
     ({ key }) => !LEGACY_WEATHER_KEYS.includes(key),
@@ -32,6 +35,15 @@ const moodId = ref("departure");
 const sceneMenuOpen = ref(false);
 const weatherId = ref("scene");
 const weatherMenuOpen = ref(false);
+const weatherFrontMenuOpen = ref(false);
+const weatherFrontId = ref(WEATHER_FRONTS[0].id);
+const weatherFrontEnabled = ref(false);
+const weatherFrozen = ref(false);
+const weatherQuality = ref("cinematic");
+const weatherFrontProgress = ref(0);
+const weatherFrontStage = ref("scene");
+const surfaceWetness = ref(0);
+const labMode = ref("weather");
 const moodIntensity = ref(1);
 const autoMood = ref(false);
 const feedbackAmount = ref(0.3);
@@ -64,6 +76,11 @@ const selectedMoodName = computed(
 const selectedWeatherName = computed(
     () => WEATHER_PRESETS.find((weather) => weather.id === weatherId.value)?.name ?? "-",
 );
+const selectedWeatherFrontName = computed(
+    () =>
+        WEATHER_FRONTS.find((front) => front.id === weatherFrontId.value)?.name ??
+        "-",
+);
 
 function toggleTravel() {
     travelRunning.value = !travelRunning.value;
@@ -83,6 +100,7 @@ function nextMood() {
 function togglePanel(panel) {
     sceneMenuOpen.value = false;
     weatherMenuOpen.value = false;
+    weatherFrontMenuOpen.value = false;
     hudVisible.value = true;
     activePanel.value = activePanel.value === panel ? null : panel;
 }
@@ -93,6 +111,7 @@ function hideHud(event) {
     activePanel.value = null;
     sceneMenuOpen.value = false;
     weatherMenuOpen.value = false;
+    weatherFrontMenuOpen.value = false;
     event?.currentTarget?.blur();
 }
 
@@ -103,8 +122,20 @@ function selectScene(id) {
 }
 
 function selectWeather(id) {
+    weatherFrontEnabled.value = false;
     weatherId.value = id;
     weatherMenuOpen.value = false;
+}
+
+function selectWeatherFront(id) {
+    weatherFrontId.value = id;
+    weatherFrontEnabled.value = true;
+    weatherFrontMenuOpen.value = false;
+}
+
+function nextWeatherFrontStage() {
+    weatherFrontEnabled.value = true;
+    renderer?.nextWeatherFrontStage();
 }
 
 function closeSceneMenu(event) {
@@ -116,6 +147,12 @@ function closeSceneMenu(event) {
 function closeWeatherMenu(event) {
     if (!event.currentTarget.contains(event.relatedTarget)) {
         weatherMenuOpen.value = false;
+    }
+}
+
+function closeWeatherFrontMenu(event) {
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+        weatherFrontMenuOpen.value = false;
     }
 }
 
@@ -214,6 +251,10 @@ async function copyMoodState() {
         ),
         weather: {
             id: stats.weatherId,
+            front: stats.weatherFront,
+            frozen: stats.weatherFrozen,
+            quality: stats.weatherQuality,
+            surfaceWetness: Number(stats.surfaceWetness.toFixed(4)),
             state: Object.fromEntries(
                 WEATHER_CONTROLS.map(({ key }) => [
                     key,
@@ -256,6 +297,7 @@ function onKeydown(event) {
         }
         sceneMenuOpen.value = false;
         weatherMenuOpen.value = false;
+        weatherFrontMenuOpen.value = false;
         activePanel.value = null;
     }
 }
@@ -268,6 +310,10 @@ watch(moodIntensity, (value) => renderer?.setMoodIntensity(value));
 watch(weatherId, (value) => {
     if (renderer?.getStats().weatherId !== value) renderer?.setWeather(value);
 });
+watch(weatherFrontId, (value) => renderer?.setWeatherFront(value));
+watch(weatherFrontEnabled, (value) => renderer?.setWeatherFrontEnabled(value));
+watch(weatherFrozen, (value) => renderer?.setWeatherFrozen(value));
+watch(weatherQuality, (value) => renderer?.setWeatherQuality(value));
 watch(autoMood, (value) => renderer?.setAutoMood(value));
 watch(feedbackAmount, (value) => renderer?.setFeedbackAmount(value));
 watch(vignetteStrength, (value) => renderer?.setVignetteStrength(value));
@@ -292,6 +338,10 @@ onMounted(async () => {
         renderer.setMood(moodId.value);
         renderer.setMoodIntensity(moodIntensity.value);
         renderer.setWeather(weatherId.value);
+        renderer.setWeatherFront(weatherFrontId.value);
+        renderer.setWeatherFrontEnabled(weatherFrontEnabled.value);
+        renderer.setWeatherFrozen(weatherFrozen.value);
+        renderer.setWeatherQuality(weatherQuality.value);
         renderer.setAutoMood(autoMood.value);
         renderer.setFeedbackAmount(feedbackAmount.value);
         renderer.setVignetteStrength(vignetteStrength.value);
@@ -306,6 +356,13 @@ onMounted(async () => {
             renderScale.value = stats.renderBudgetScale;
             travelTime.value = stats.travelTime;
             weatherTime.value = stats.weatherTime;
+            surfaceWetness.value = stats.surfaceWetness;
+            weatherFrozen.value = stats.weatherFrozen;
+            weatherQuality.value = stats.weatherQuality;
+            weatherFrontEnabled.value = stats.weatherFront.enabled;
+            weatherFrontId.value = stats.weatherFront.id;
+            weatherFrontProgress.value = stats.weatherFront.progress;
+            weatherFrontStage.value = stats.weatherFront.weatherId;
             cueId.value = stats.cueId;
             cueProgress.value = stats.cueProgress;
             travelRunning.value = stats.travelRunning;
@@ -718,99 +775,210 @@ onBeforeUnmount(() => {
                             class="panel-content lab-content"
                         >
                             <div class="drawer-heading">
-                                <span>04 / MOOD LAB</span>
-                                <span>WX {{ weatherTime.toFixed(1) }}</span>
+                                <span>04 / ENGINE LAB</span>
+                                <span :class="{ frozen: weatherFrozen }">
+                                    {{ weatherFrozen ? "WX FROZEN" : `WX ${weatherTime.toFixed(1)}` }}
+                                </span>
                             </div>
-                            <div class="lab-section-heading">
-                                <span>SCENE</span>
-                                <small>PALETTE · SUBJECT · GRADE</small>
-                            </div>
-                            <label
-                                v-for="control in MOOD_ONLY_CONTROLS"
-                                :key="control.key"
-                                class="range-row compact-row"
-                            >
-                                <span
-                                    >{{ control.label }}
-                                    <output>{{
-                                        authoringValues[control.key]?.toFixed(
-                                            2,
-                                        ) ?? "-"
-                                    }}</output></span
-                                >
-                                <input
-                                    v-model.number="
-                                        authoringValues[control.key]
-                                    "
-                                    type="range"
-                                    :min="control.min"
-                                    :max="control.max"
-                                    :step="control.step"
-                                    :style="{
-                                        '--range-progress': `${((authoringValues[control.key] - control.min) / (control.max - control.min)) * 100}%`,
-                                    }"
-                                    @input="
-                                        overrideMood(
-                                            control.key,
-                                            authoringValues[control.key],
-                                        )
-                                    "
-                                />
-                            </label>
-                            <div class="lab-section-heading">
-                                <span>WEATHER</span>
-                                <small>{{ selectedWeatherName }}</small>
-                            </div>
-                            <label
-                                v-for="control in RENDERED_WEATHER_CONTROLS"
-                                :key="control.key"
-                                class="range-row compact-row"
-                            >
-                                <span
-                                    >{{ control.label }}
-                                    <output>{{
-                                        weatherValues[control.key]?.toFixed(2) ?? "-"
-                                    }}</output></span
-                                >
-                                <input
-                                    v-model.number="weatherValues[control.key]"
-                                    type="range"
-                                    :min="control.min"
-                                    :max="control.max"
-                                    :step="control.step"
-                                    :style="{
-                                        '--range-progress': `${((weatherValues[control.key] - control.min) / (control.max - control.min)) * 100}%`,
-                                    }"
-                                    @input="overrideWeather(control.key, weatherValues[control.key])"
-                                />
-                            </label>
-                            <div
-                                class="color-grid"
-                                aria-label="Authored scene colors"
-                            >
-                                <label
-                                    v-for="color in AUTHORING_COLORS"
-                                    :key="color.key"
-                                    class="color-row"
-                                >
-                                    <span>{{ color.label }}</span>
-                                    <input
-                                        v-model="authoringColors[color.key]"
-                                        type="color"
-                                        @input="
-                                            overrideMoodColor(
-                                                color.key,
-                                                authoringColors[color.key],
-                                            )
-                                        "
-                                    />
-                                </label>
-                            </div>
-                            <div class="button-row sticky-actions">
+                            <div class="lab-tabs" role="tablist" aria-label="Engine lab">
                                 <button
                                     type="button"
-                                    @click="clearAuthoringOverrides"
+                                    role="tab"
+                                    :aria-selected="labMode === 'scene'"
+                                    @click="labMode = 'scene'"
                                 >
+                                    SCENE
+                                </button>
+                                <button
+                                    type="button"
+                                    role="tab"
+                                    :aria-selected="labMode === 'weather'"
+                                    @click="labMode = 'weather'"
+                                >
+                                    WEATHER
+                                </button>
+                            </div>
+
+                            <template v-if="labMode === 'scene'">
+                                <div class="lab-section-heading">
+                                    <span>SCENE</span>
+                                    <small>PALETTE · SUBJECT · GRADE</small>
+                                </div>
+                                <label
+                                    v-for="control in MOOD_ONLY_CONTROLS"
+                                    :key="control.key"
+                                    class="range-row compact-row"
+                                >
+                                    <span>{{ control.label }}
+                                        <output>{{ authoringValues[control.key]?.toFixed(2) ?? "-" }}</output>
+                                    </span>
+                                    <input
+                                        v-model.number="authoringValues[control.key]"
+                                        type="range"
+                                        :min="control.min"
+                                        :max="control.max"
+                                        :step="control.step"
+                                        :style="{
+                                            '--range-progress': `${((authoringValues[control.key] - control.min) / (control.max - control.min)) * 100}%`,
+                                        }"
+                                        @input="overrideMood(control.key, authoringValues[control.key])"
+                                    />
+                                </label>
+                                <div class="color-grid" aria-label="Authored scene colors">
+                                    <label
+                                        v-for="color in AUTHORING_COLORS"
+                                        :key="color.key"
+                                        class="color-row"
+                                    >
+                                        <span>{{ color.label }}</span>
+                                        <input
+                                            v-model="authoringColors[color.key]"
+                                            type="color"
+                                            @input="overrideMoodColor(color.key, authoringColors[color.key])"
+                                        />
+                                    </label>
+                                </div>
+                            </template>
+
+                            <template v-else>
+                                <div class="weather-diagnostics">
+                                    <span><small>STATE</small><strong>{{ selectedWeatherName }}</strong></span>
+                                    <span><small>SURFACE</small><strong>{{ Math.round(surfaceWetness * 100) }}% WET</strong></span>
+                                    <span><small>PERFORMANCE</small><strong>{{ weatherQuality }}</strong></span>
+                                </div>
+
+                                <div class="lab-section-heading">
+                                    <span>WEATHER SOURCE</span>
+                                    <small>{{ weatherFrontEnabled ? "FRONT" : "MANUAL" }}</small>
+                                </div>
+                                <div class="select-row">
+                                    <span>Physical preset</span>
+                                    <div class="scene-select" @focusout="closeWeatherMenu">
+                                        <button
+                                            class="scene-select-trigger"
+                                            type="button"
+                                            aria-haspopup="listbox"
+                                            :aria-expanded="weatherMenuOpen"
+                                            @click="
+                                                weatherFrontMenuOpen = false;
+                                                weatherMenuOpen = !weatherMenuOpen;
+                                            "
+                                        >
+                                            <span>{{ selectedWeatherName }}</span><i aria-hidden="true"></i>
+                                        </button>
+                                        <ul
+                                            v-if="weatherMenuOpen"
+                                            class="scene-options"
+                                            role="listbox"
+                                            aria-label="Physical weather preset"
+                                            @wheel.stop
+                                        >
+                                            <li v-for="weather in WEATHER_PRESETS" :key="weather.id">
+                                                <button
+                                                    type="button"
+                                                    role="option"
+                                                    :aria-selected="weather.id === weatherId"
+                                                    @click="selectWeather(weather.id)"
+                                                >{{ weather.name }}</button>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                </div>
+                                <div class="select-row">
+                                    <span>Weather front</span>
+                                    <div class="scene-select" @focusout="closeWeatherFrontMenu">
+                                        <button
+                                            class="scene-select-trigger"
+                                            type="button"
+                                            aria-haspopup="listbox"
+                                            :aria-expanded="weatherFrontMenuOpen"
+                                            @click="
+                                                weatherMenuOpen = false;
+                                                weatherFrontMenuOpen = !weatherFrontMenuOpen;
+                                            "
+                                        >
+                                            <span>{{ selectedWeatherFrontName }}</span><i aria-hidden="true"></i>
+                                        </button>
+                                        <ul
+                                            v-if="weatherFrontMenuOpen"
+                                            class="scene-options"
+                                            role="listbox"
+                                            aria-label="Weather front"
+                                            @wheel.stop
+                                        >
+                                            <li v-for="front in WEATHER_FRONTS" :key="front.id">
+                                                <button
+                                                    type="button"
+                                                    role="option"
+                                                    :aria-selected="front.id === weatherFrontId"
+                                                    @click="selectWeatherFront(front.id)"
+                                                >{{ front.name }}</button>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                </div>
+                                <label class="switch-label">
+                                    <input v-model="weatherFrontEnabled" type="checkbox" />
+                                    <span class="switch"></span>
+                                    <span>RUN WEATHER FRONT</span>
+                                </label>
+                                <label class="switch-label freeze-switch">
+                                    <input v-model="weatherFrozen" type="checkbox" />
+                                    <span class="switch"></span>
+                                    <span>FREEZE PHYSICAL WEATHER</span>
+                                </label>
+                                <div v-if="weatherFrontEnabled" class="cue-readout weather-front-readout">
+                                    <span><small>FRONT STAGE</small><strong>{{ weatherFrontStage.replaceAll("-", " ") }}</strong></span>
+                                    <i><b :style="{ transform: `scaleX(${weatherFrontProgress})` }"></b></i>
+                                    <button class="text-button" type="button" @click="nextWeatherFrontStage">
+                                        ADVANCE STAGE
+                                    </button>
+                                </div>
+
+                                <div class="lab-section-heading">
+                                    <span>WEATHER PERFORMANCE</span>
+                                    <small>RESOLUTION · RAIN FIELDS</small>
+                                </div>
+                                <div class="quality-options">
+                                    <button
+                                        v-for="mode in WEATHER_QUALITY_MODES"
+                                        :key="mode.id"
+                                        type="button"
+                                        :aria-pressed="weatherQuality === mode.id"
+                                        @click="weatherQuality = mode.id"
+                                    >{{ mode.name }}</button>
+                                </div>
+
+                                <template v-for="group in WEATHER_CONTROL_GROUPS" :key="group.id">
+                                    <div class="lab-section-heading weather-group-heading">
+                                        <span>{{ group.name }}</span>
+                                        <small>{{ group.controls.length }} CHANNELS</small>
+                                    </div>
+                                    <label
+                                        v-for="control in group.controls"
+                                        :key="control.key"
+                                        class="range-row compact-row"
+                                    >
+                                        <span>{{ control.label }}
+                                            <output>{{ weatherValues[control.key]?.toFixed(2) ?? "-" }}</output>
+                                        </span>
+                                        <input
+                                            v-model.number="weatherValues[control.key]"
+                                            type="range"
+                                            :min="control.min"
+                                            :max="control.max"
+                                            :step="control.step"
+                                            :style="{
+                                                '--range-progress': `${((weatherValues[control.key] - control.min) / (control.max - control.min)) * 100}%`,
+                                            }"
+                                            @input="overrideWeather(control.key, weatherValues[control.key])"
+                                        />
+                                    </label>
+                                </template>
+                            </template>
+
+                            <div class="button-row sticky-actions">
+                                <button type="button" @click="clearAuthoringOverrides">
                                     CLEAR OVERRIDES
                                 </button>
                                 <button type="button" @click="copyMoodState">

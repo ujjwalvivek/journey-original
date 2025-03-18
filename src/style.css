@@ -719,6 +719,117 @@ input[type="range"]:focus-visible::-moz-range-thumb {
     white-space: nowrap;
 }
 
+.drawer-heading .frozen {
+    color: rgba(255, 151, 111, 0.86);
+}
+
+.lab-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    margin: 8px 0 12px;
+    border: 1px solid rgba(255, 228, 210, 0.14);
+}
+
+.lab-tabs button {
+    min-height: 34px;
+    border: 0;
+    color: rgba(255, 230, 214, 0.5);
+    background: rgba(255, 255, 255, 0.02);
+    cursor: pointer;
+    font-size: 8px;
+    letter-spacing: 0.12em;
+}
+
+.lab-tabs button + button {
+    border-left: 1px solid rgba(255, 228, 210, 0.14);
+}
+
+.lab-tabs button[aria-selected="true"] {
+    color: #fff3eb;
+    background: rgba(255, 116, 68, 0.13);
+    box-shadow: inset 0 -2px var(--accent);
+}
+
+.weather-diagnostics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 5px;
+}
+
+.weather-diagnostics > span {
+    min-width: 0;
+    padding: 8px;
+    border: 1px solid rgba(255, 228, 210, 0.11);
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.weather-diagnostics small,
+.weather-diagnostics strong {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.weather-diagnostics small {
+    margin-bottom: 4px;
+    color: rgba(255, 194, 159, 0.45);
+    font-size: 6px;
+    letter-spacing: 0.1em;
+}
+
+.weather-diagnostics strong {
+    color: rgba(255, 240, 229, 0.8);
+    font-size: 8px;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+.freeze-switch {
+    margin-top: 0;
+}
+
+.lab-content .switch-label {
+    display: flex;
+}
+
+.weather-front-readout {
+    margin-top: 2px;
+}
+
+.weather-front-readout .text-button {
+    margin-top: 2px;
+}
+
+.quality-options {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 5px;
+    margin-top: 9px;
+}
+
+.quality-options button {
+    min-height: 31px;
+    padding: 0 5px;
+    border: 1px solid rgba(255, 228, 210, 0.14);
+    color: rgba(255, 232, 218, 0.5);
+    background: rgba(255, 255, 255, 0.025);
+    cursor: pointer;
+    font-size: 7px;
+    letter-spacing: 0.07em;
+}
+
+.quality-options button:hover,
+.quality-options button[aria-pressed="true"] {
+    border-color: rgba(255, 145, 99, 0.5);
+    color: #fff3eb;
+    background: rgba(255, 116, 68, 0.12);
+}
+
+.weather-group-heading {
+    margin-top: 14px;
+}
+
 .button-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
