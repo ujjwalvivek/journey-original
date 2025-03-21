@@ -26,6 +26,7 @@ struct Uniforms {
   weatherDynamics: vec4f, // x rain angle, y wind direction, z gustiness, w wetness
   weatherTimes: vec4f, // x weather, y precipitation, z gust, w mist
   weatherSurface: vec4f, // x light scatter, y drying rate, z rain quality
+  weatherDetail: vec4f, // x desaturation, y rain depth, z rain contrast, w foreground rain
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -362,6 +363,9 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let rainOccupancy = 1.0 - (1.0 - rainDensity) * (1.0 - rainDensity * 0.65);
   let downpour = smoothstep(0.58, 0.95, rainDensity);
   let rainLength = max(uniforms.weatherPrecipitation.w, 0.05);
+  let rainDepthBias = clamp(uniforms.weatherDetail.y, -1.0, 1.0);
+  let rainContrast = mix(0.55, 1.45, clamp(uniforms.weatherDetail.z, 0.0, 1.0));
+  let foregroundRainAmount = clamp(uniforms.weatherDetail.w, 0.0, 1.0);
   let windDirection = clamp(uniforms.weatherDynamics.y, -1.0, 1.0);
   let gustStrength = clamp(uniforms.weatherDynamics.z, 0.0, 1.0);
   let rainSlant = clamp(
@@ -374,19 +378,22 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let rainQuality = clamp(uniforms.weatherSurface.z, 0.0, 2.0);
   let distantRainPrimary = rainField(
     uv, precipitationT, 82.0, 24.0,
-    rainOccupancy * 0.82, rainLength * 0.18,
+    clamp(rainOccupancy * (0.82 - rainDepthBias * 0.24), 0.0, 0.999),
+    rainLength * 0.18,
     0.14, rainSlant, 3.7
   );
   var distantRainFill = 0.0;
   if (rainQuality > 1.5 && downpour > 0.001) {
     distantRainFill = rainField(
       uv + vec2f(0.004, 0.017), precipitationT, 69.0, 29.0,
-      rainOccupancy * 0.9, rainLength * 0.14,
+      clamp(rainOccupancy * (0.9 - rainDepthBias * 0.18), 0.0, 0.999),
+      rainLength * 0.14,
       0.17, rainSlant, 11.2
     ) * downpour;
   }
   let distantRain = clamp(distantRainPrimary + distantRainFill, 0.0, 1.0) *
-    precipitation * 0.13 * clamp(uniforms.weatherAtmosphere.x + 0.22, 0.0, 1.0);
+    precipitation * 0.13 * (1.0 - rainDepthBias * 0.28) * rainContrast *
+    clamp(uniforms.weatherAtmosphere.x + 0.22, 0.0, 1.0);
 
   var fg = vec4f(0.0);
   let n = 5;
@@ -507,6 +514,37 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let driverWindowBloom = exp(-driverWindowDistance * 320.0) *
     boxMask(trainUv, 0.454, 0.472, 0.106, 0.119);
   col = mix(col, trainDark * 0.58, driverWindowFrame);
+
+  // Wet window light forms a continuous wash rather than a stack of bright
+  // bands. Low-frequency noise only disturbs its edge, reach, and intensity,
+  // leaving the body filled while preventing a rigid rectangular silhouette.
+  let reflectionDepth = max(0.103 - trainUv.y, 0.0);
+  let reflectionRegion = trainPresence * (1.0 - step(0.44, trainUv.x)) *
+    step(0.045, trainUv.y) * (1.0 - step(0.1028, trainUv.y));
+  let reflectionNoise = noise(vec2f(
+    trainUv.x * 176.0 + uniforms.weatherTimes.x * 0.035,
+    reflectionDepth * 286.0
+  ));
+  // Keep the wash vertical and approximately the width of its source window.
+  // Noise can soften the sides, but must not turn the reflection into a cone.
+  let reflectionWidth = 0.034 * mix(0.9, 1.1, reflectionNoise);
+  let reflectionColumn = 1.0 - smoothstep(
+    reflectionWidth * 0.62,
+    reflectionWidth,
+    windowLocalX
+  );
+  let reflectionReach = 0.028 + reflectionNoise * 0.008;
+  let reflectionEndFade = 1.0 - smoothstep(
+    reflectionReach * 0.58,
+    reflectionReach,
+    reflectionDepth
+  );
+  let reflectionDistanceFade = exp(-reflectionDepth * 78.0);
+  let reflectionBody = reflectionColumn * reflectionEndFade *
+    reflectionDistanceFade *
+    mix(0.72, 1.0, reflectionNoise);
+  let brokenWindowReflection = surfaceWetness * clamp(trainLift, 0.0, 1.0) *
+    reflectionRegion * reflectionBody;
 
   // Reuse the exact transformed wagon coordinate and roof bounds. Keeping a
   // separate screen-space strip here made the sliver appear detached during
@@ -655,19 +693,21 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   // of the readable weather without flattening the scene.
   let middleRainPrimary = rainField(
     uv + vec2f(0.0, 0.013), precipitationT, 124.0, 19.0,
-    rainOccupancy * 0.98, rainLength * 0.3,
+    clamp(rainOccupancy * (0.98 - abs(rainDepthBias) * 0.12), 0.0, 0.999),
+    rainLength * 0.3,
     0.23, rainSlant, 19.4
   );
   var middleRainFill = 0.0;
   if (rainQuality > 1.5 && downpour > 0.001) {
     middleRainFill = rainField(
       uv + vec2f(0.007, 0.029), precipitationT, 107.0, 23.0,
-      rainOccupancy * 0.94, rainLength * 0.24,
+      clamp(rainOccupancy * (0.94 - abs(rainDepthBias) * 0.1), 0.0, 0.999),
+      rainLength * 0.24,
       0.29, rainSlant, 28.6
     ) * downpour;
   }
   let middleRain = clamp(middleRainPrimary + middleRainFill, 0.0, 1.0) *
-    precipitation * 0.22 * (1.0 - atmosphericVeil * 0.38);
+    precipitation * 0.22 * rainContrast * (1.0 - atmosphericVeil * 0.38);
   let rainLightColor = mix(uniforms.fogColor.rgb, uniforms.practicalLightColor.rgb, 0.18);
   col = mix(col, rainLightColor, middleRain);
 
@@ -684,7 +724,8 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   if (rainQuality > 0.5) {
     foregroundRainPrimary = rainField(
       uv + vec2f(0.0, 0.031), precipitationT, 168.0, 14.0,
-      rainOccupancy * 0.76, rainLength * 0.42,
+      clamp(rainOccupancy * (0.76 + rainDepthBias * 0.28), 0.0, 0.999),
+      rainLength * 0.42,
       0.38, rainSlant, 41.8
     );
   }
@@ -692,16 +733,30 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   if (rainQuality > 1.5 && downpour > 0.001) {
     foregroundRainFill = rainField(
       uv + vec2f(0.011, 0.043), precipitationT, 143.0, 17.0,
-      rainOccupancy * 0.82, rainLength * 0.34,
+      clamp(rainOccupancy * (0.82 + rainDepthBias * 0.18), 0.0, 0.999),
+      rainLength * 0.34,
       0.47, rainSlant, 53.1
     ) * downpour;
   }
   let foregroundRain = clamp(foregroundRainPrimary + foregroundRainFill, 0.0, 1.0) *
-    precipitation * 0.28;
+    precipitation * 0.28 * foregroundRainAmount *
+    (1.0 + rainDepthBias * 0.5) * rainContrast;
   col = mix(col, mix(rainLightColor, uniforms.cloudLight.rgb, 0.16), foregroundRain);
   col = (col - vec3f(0.5)) * uniforms.motion.w + vec3f(0.5);
   col *= uniforms.grade.w;
   col = applyMoodPalette(col, moodUv);
+  // Atmospheric desaturation is independent from mood grading. It is
+  // strongest through the distant medium while preserving practical-light
+  // chroma, which is emitted below after this operation.
+  let atmosphericDesaturation = clamp(uniforms.weatherDetail.x, 0.0, 1.0);
+  let desaturationDepth = clamp(
+    atmosphericDesaturation *
+      (0.34 + horizonBand * 0.22 + atmosphericVeil * 0.54),
+    0.0,
+    1.0
+  );
+  let atmosphericLuma = dot(col, vec3f(0.2126, 0.7152, 0.0722));
+  col = mix(col, vec3f(atmosphericLuma), desaturationDepth);
   // A crisp, desaturated reflection survives palette grading and feedback.
   // Water borrows scene luminance rather than the mood hue, which keeps rain
   // legible in warm scenes without turning it into blue neon.
@@ -752,6 +807,8 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
     trainWetSpecular * k * wetSurfaceVisibility +
     bridgeWetSpecular * wetSurfaceVisibility;
   col += waterSpecularColor * wetSurfaceSpecular * (0.12 + moistureScatter * 0.12);
+  col += scatterLightColor * brokenWindowReflection * wetSurfaceVisibility *
+    (0.08 + moistureScatter * 0.12);
 
   return vec4f(col, 1.0);
 }
