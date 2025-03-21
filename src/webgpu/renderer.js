@@ -16,7 +16,7 @@ import { WeatherClock } from "../weather/weatherClock.js";
 import { WeatherFront } from "../weather/weatherFront.js";
 
 const BUFFER_FORMAT = "rgba16float";
-const UNIFORM_FLOATS = 100;
+const UNIFORM_FLOATS = 104;
 const UNIFORM_BYTES = UNIFORM_FLOATS * 4;
 
 export class JourneyRenderer {
@@ -551,6 +551,10 @@ export class JourneyRenderer {
                 ({ id }) => id === this.weatherQuality,
             )?.value ?? 2;
         this.uniformData[99] = 0;
+        this.uniformData[100] = mood.atmosphericDesaturation;
+        this.uniformData[101] = mood.rainDepthDistribution;
+        this.uniformData[102] = mood.rainContrast;
+        this.uniformData[103] = mood.foregroundRainAmount;
 
         this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
     }
