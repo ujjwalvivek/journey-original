@@ -32,10 +32,34 @@ test("the weather lab exposes only shader-backed controls", () => {
         "rainSpeed",
         "rainLength",
         "rainAngle",
+        "rainDepthDistribution",
+        "rainContrast",
+        "foregroundRainAmount",
+        "atmosphericDesaturation",
         "wetness",
         "lightScatter",
         "dryingRate",
     ]) assert.equal(renderedKeys.has(key), true, key);
+});
+
+test("new atmosphere and rain composition controls have neutral authored defaults", () => {
+    assert.equal(BASE_WEATHER.atmosphericDesaturation, 0);
+    assert.equal(BASE_WEATHER.rainDepthDistribution, 0);
+    assert.equal(BASE_WEATHER.rainContrast, 0.5);
+    assert.equal(BASE_WEATHER.foregroundRainAmount, 1);
+});
+
+test("new atmosphere and rain composition overrides are clamped", () => {
+    const engine = new WeatherEngine(0);
+    engine.setOverride("atmosphericDesaturation", 2);
+    engine.setOverride("rainDepthDistribution", -2);
+    engine.setOverride("rainContrast", 3);
+    engine.setOverride("foregroundRainAmount", -1);
+    const state = engine.update(0, BASE_WEATHER);
+    assert.equal(state.atmosphericDesaturation, 1);
+    assert.equal(state.rainDepthDistribution, -1);
+    assert.equal(state.rainContrast, 1);
+    assert.equal(state.foregroundRainAmount, 0);
 });
 
 test("weather lab groups cover every physical control exactly once", () => {
