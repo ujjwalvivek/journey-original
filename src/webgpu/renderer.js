@@ -10,7 +10,7 @@ import {
     WeatherEngine,
     WEATHER_QUALITY_MODES,
     composeWeather,
-    extractSceneWeather,
+    resolveAuthoredWeather,
 } from "../weather/weatherEngine.js";
 import { WeatherClock } from "../weather/weatherClock.js";
 import { WeatherFront } from "../weather/weatherFront.js";
@@ -55,9 +55,13 @@ export class JourneyRenderer {
         this.cueTimeline = new CueTimeline();
         const nowSeconds = performance.now() / 1000;
         this.resolvedSceneMood = this.moodEngine.update(nowSeconds);
+        this.weatherEngine.setAuthoredWeather(
+            this.resolvedSceneMood.defaultWeatherId,
+            this.weatherStateTime,
+        );
         this.resolvedWeather = this.weatherEngine.update(
             this.weatherStateTime,
-            extractSceneWeather(this.resolvedSceneMood),
+            resolveAuthoredWeather(this.resolvedSceneMood.defaultWeatherId),
         );
         this.resolvedMood = composeWeather(
             this.resolvedSceneMood,
@@ -339,8 +343,13 @@ export class JourneyRenderer {
         this.vignetteStrength = Math.max(0, Math.min(1, Number(value) || 0));
     }
 
-    setMood(id) {
-        this.moodEngine.setMood(id);
+    setMood(id, nowSeconds = performance.now() / 1000) {
+        const preset = this.moodEngine.getPreset(id);
+        this.moodEngine.setMood(preset.id, nowSeconds);
+        this.weatherEngine.setAuthoredWeather(
+            preset.defaultWeatherId,
+            this.weatherStateTime,
+        );
     }
 
     setMoodIntensity(value) {
@@ -352,7 +361,7 @@ export class JourneyRenderer {
         return this.weatherEngine.setWeather(
             id,
             this.weatherStateTime,
-            extractSceneWeather(this.resolvedSceneMood),
+            resolveAuthoredWeather(this.resolvedSceneMood.defaultWeatherId),
         );
     }
 
@@ -393,7 +402,7 @@ export class JourneyRenderer {
     setAutoMood(enabled) {
         this.moodEngine.setAutoCycle(false);
         const cue = this.cueTimeline.setEnabled(enabled);
-        if (enabled) this.moodEngine.setMood(cue.moodId);
+        if (enabled) this.setMood(cue.moodId);
     }
 
     setMoodCycleSeconds(value) {
@@ -408,15 +417,21 @@ export class JourneyRenderer {
         this.moodEngine.clearOverrides();
     }
 
-    nextMood() {
-        return this.moodEngine.next();
+    nextMood(nowSeconds = performance.now() / 1000) {
+        const id = this.moodEngine.next(nowSeconds);
+        const preset = this.moodEngine.getPreset(id);
+        this.weatherEngine.setAuthoredWeather(
+            preset.defaultWeatherId,
+            this.weatherStateTime,
+        );
+        return id;
     }
 
     resetJourney() {
         this.clock.reset();
         this.weatherClock.reset();
         const cue = this.cueTimeline.reset();
-        if (this.cueTimeline.enabled) this.moodEngine.setMood(cue.moodId);
+        if (this.cueTimeline.enabled) this.setMood(cue.moodId);
         this.clearFeedback();
     }
 
@@ -439,6 +454,7 @@ export class JourneyRenderer {
             weatherQuality: this.weatherQuality,
             weatherFront: this.weatherFront.getState(),
             weatherId: this.weatherEngine.currentId,
+            authoredWeatherId: this.weatherEngine.authoredWeatherId,
             weather: this.resolvedWeather,
             cueId: this.cueTimeline.current.id,
             cueProgress: this.cueTimeline.elapsedInCue() / this.cueTimeline.current.duration,
@@ -583,12 +599,12 @@ export class JourneyRenderer {
 
         const delta = this.frameDelta(now);
         this.sceneAge += delta;
+        const nowSeconds = now / 1000;
         const cueState = this.cueTimeline.advance(delta, {
             running: this.travelRunning,
             speed: this.travelSpeed,
         });
-        if (cueState.changed) this.moodEngine.setMood(cueState.cue.moodId, now / 1000);
-        const nowSeconds = now / 1000;
+        if (cueState.changed) this.setMood(cueState.cue.moodId, nowSeconds);
         const sceneMood = this.moodEngine.update(nowSeconds);
         if (!this.weatherFrozen) this.weatherStateTime += delta;
         const frontState = this.weatherFrozen
@@ -598,12 +614,12 @@ export class JourneyRenderer {
             this.weatherEngine.setWeather(
                 frontState.stage.weatherId,
                 this.weatherStateTime,
-                extractSceneWeather(sceneMood),
+                resolveAuthoredWeather(sceneMood.defaultWeatherId),
             );
         }
         const weather = this.weatherEngine.update(
             this.weatherStateTime,
-            extractSceneWeather(sceneMood),
+            resolveAuthoredWeather(sceneMood.defaultWeatherId),
         );
         this.resolvedSceneMood = sceneMood;
         this.weatherClock.advance(this.weatherFrozen ? 0 : delta, {

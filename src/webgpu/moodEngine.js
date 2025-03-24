@@ -30,6 +30,18 @@ const BASE_SCENE_COLORS = Object.freeze({
     fogColor: [0.72, 0.54, 0.5],
 });
 
+// Authored scenes choose a physical weather baseline explicitly. The legacy
+// weather-like world values remain in the scene definitions for palette and
+// transition compatibility, but no longer decide "Authored scene" weather.
+export const SCENE_DEFAULT_WEATHER = Object.freeze({
+    departure: "clear",
+    ember: "clear",
+    "blue-hour": "haze",
+    sakura: "clear",
+    monsoon: "monsoon",
+    "night-rail": "haze",
+});
+
 export const AUTHORING_COLORS = Object.freeze([
     { key: "low", label: "Grade shadow" },
     { key: "high", label: "Grade light" },
@@ -102,6 +114,7 @@ function mood(id, name, low, high, world = {}, colors = {}, transition = {}) {
     return Object.freeze({
         id,
         name,
+        defaultWeatherId: SCENE_DEFAULT_WEATHER[id] ?? "clear",
         low: Object.freeze(low),
         high: Object.freeze(high),
         world: Object.freeze({ ...BASE_WORLD, ...world }),
@@ -486,6 +499,7 @@ export class MoodEngine {
         this.updateTransition(nowSeconds);
         const resolved = {
             id: this.currentId,
+            defaultWeatherId: this.getPreset(this.currentId).defaultWeatherId,
             intensity: this.intensity,
             ...blendState(this.base, this.current, this.intensity),
         };
