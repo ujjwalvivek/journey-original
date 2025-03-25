@@ -10,8 +10,13 @@ import {
     WeatherEngine,
     composeWeather,
     extractSceneWeather,
+    resolveAuthoredWeather,
 } from "../src/weather/weatherEngine.js";
-import { MOODS, MoodEngine } from "../src/webgpu/moodEngine.js";
+import {
+    MOODS,
+    MoodEngine,
+    SCENE_DEFAULT_WEATHER,
+} from "../src/webgpu/moodEngine.js";
 
 test("every physical weather preset resolves a complete state", () => {
     for (const preset of WEATHER_PRESETS.filter(({ state }) => state)) {
@@ -98,14 +103,70 @@ test("authored-scene weather mode is an exact pass-through", () => {
     assert.equal(state.fogDensity, 0.48);
 });
 
-test("weather groups transition on independent schedules", () => {
+test("authored scenes resolve their explicit physical weather preset", () => {
+    const physicalPresetIds = new Set(
+        WEATHER_PRESETS.filter(({ state }) => state).map(({ id }) => id),
+    );
+    for (const scene of MOODS) {
+        assert.equal(physicalPresetIds.has(scene.defaultWeatherId), true);
+        assert.equal(scene.defaultWeatherId, SCENE_DEFAULT_WEATHER[scene.id]);
+        const authored = resolveAuthoredWeather(scene.defaultWeatherId);
+        const preset = WEATHER_PRESETS.find(
+            ({ id }) => id === scene.defaultWeatherId,
+        );
+        assert.deepEqual(authored, preset.state);
+    }
+});
+
+test("changing an authored scene transitions from the resolved weather", () => {
     const engine = new WeatherEngine(0);
-    engine.update(0, BASE_WEATHER);
-    engine.setWeather("monsoon", 0, BASE_WEATHER);
-    const state = engine.update(5, BASE_WEATHER);
-    assert.ok(state.windSpeed > 1.7);
-    assert.ok(state.precipitation > 0 && state.precipitation < 1);
-    assert.ok(state.wetness > 0 && state.wetness < 1);
+    const clear = resolveAuthoredWeather("clear");
+    const haze = resolveAuthoredWeather("haze");
+    engine.update(0, clear);
+    engine.setAuthoredWeather("haze", 0);
+
+    const opening = engine.update(0, haze);
+    assert.equal(opening.id, "scene");
+    assert.equal(engine.authoredWeatherId, "haze");
+    assert.equal(opening.windSpeed, clear.windSpeed);
+    assert.equal(opening.horizonHaze, clear.horizonHaze);
+
+    const resolving = engine.update(4, haze);
+    assert.ok(resolving.windSpeed < clear.windSpeed);
+    assert.ok(resolving.horizonHaze > clear.horizonHaze);
+});
+
+test("storm weather unfolds causally across delayed physical groups", () => {
+    const engine = new WeatherEngine(0);
+    const clear = resolveAuthoredWeather("clear");
+    engine.update(0, clear);
+    engine.setWeather("monsoon", 0, clear);
+
+    const windStage = engine.update(1, clear);
+    assert.ok(windStage.windSpeed > clear.windSpeed);
+    assert.equal(windStage.cloudCoverage, clear.cloudCoverage);
+    assert.equal(windStage.visibility, clear.visibility);
+    assert.equal(windStage.mistDensity, clear.mistDensity);
+    assert.equal(windStage.precipitation, clear.precipitation);
+    assert.equal(windStage.wetness, clear.wetness);
+
+    const cloudStage = engine.update(3, clear);
+    assert.ok(cloudStage.cloudCoverage > clear.cloudCoverage);
+    assert.equal(cloudStage.visibility, clear.visibility);
+    assert.equal(cloudStage.precipitation, clear.precipitation);
+
+    const visibilityStage = engine.update(5, clear);
+    assert.ok(visibilityStage.visibility < clear.visibility);
+    assert.equal(visibilityStage.mistDensity, clear.mistDensity);
+    assert.equal(visibilityStage.precipitation, clear.precipitation);
+
+    const rainStage = engine.update(8, clear);
+    assert.ok(rainStage.mistDensity > clear.mistDensity);
+    assert.ok(rainStage.precipitation > 0);
+    assert.equal(rainStage.wetness, clear.wetness);
+
+    const surfaceStage = engine.update(12, clear);
+    assert.ok(surfaceStage.wetness > clear.wetness);
 });
 
 test("interrupting weather continues from the resolved state", () => {
@@ -141,22 +202,17 @@ test("weather composition overrides only weather-owned channels", () => {
     assert.equal(composed.windSpeed, 1.4);
 });
 
-test("authored-scene mode preserves every legacy mood weather value", () => {
+test("authored-scene mode is independent from embedded legacy mood weather", () => {
     for (const preset of MOODS) {
         const moodEngine = new MoodEngine(0);
         moodEngine.setMood(preset.id, 0);
         const scene = moodEngine.update(100);
         const weatherEngine = new WeatherEngine(0);
-        const weather = weatherEngine.update(100, extractSceneWeather(scene));
+        weatherEngine.setAuthoredWeather(scene.defaultWeatherId, 0);
+        const authored = resolveAuthoredWeather(scene.defaultWeatherId);
+        const weather = weatherEngine.update(100, authored);
         const composed = composeWeather(scene, weather);
-        for (const key of [
-            "cloudCoverage",
-            "cloudHeight",
-            "cloudScale",
-            "turbulence",
-            "windSpeed",
-            "smokeAmount",
-            "fogDensity",
-        ]) assert.equal(composed[key], scene[key], `${preset.id}: ${key}`);
+        for (const key of WEATHER_STATE_KEYS)
+            assert.equal(composed[key], authored[key], `${preset.id}: ${key}`);
     }
 });

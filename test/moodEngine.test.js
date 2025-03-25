@@ -4,6 +4,7 @@ import {
     AUTHORING_COLORS,
     MOODS,
     MoodEngine,
+    SCENE_DEFAULT_WEATHER,
 } from "../src/webgpu/moodEngine.js";
 
 test("every authored scene resolves a complete RGB scene palette", () => {
@@ -16,6 +17,21 @@ test("every authored scene resolves a complete RGB scene palette", () => {
             assert.equal(color.every((channel) => channel >= 0 && channel <= 1), true);
         }
     }
+});
+
+test("every authored scene explicitly selects its default physical weather", () => {
+    for (const scene of MOODS) {
+        assert.equal(
+            scene.defaultWeatherId,
+            SCENE_DEFAULT_WEATHER[scene.id],
+            scene.id,
+        );
+        assert.equal(typeof scene.defaultWeatherId, "string");
+    }
+    assert.equal(
+        MOODS.find(({ id }) => id === "night-rail").defaultWeatherId,
+        "haze",
+    );
 });
 
 test("departure is authored while zero intensity reveals the hidden shader base", () => {
