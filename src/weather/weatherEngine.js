@@ -232,11 +232,12 @@ export const RENDERED_WEATHER_CONTROLS = Object.freeze(
 );
 
 const DEFAULT_TRANSITION = Object.freeze({
-    cloud: Object.freeze({ duration: 8, easing: "smooth" }),
-    motion: Object.freeze({ duration: 5, easing: "easeOut" }),
-    atmosphere: Object.freeze({ duration: 9, easing: "smooth" }),
-    precipitation: Object.freeze({ duration: 4, easing: "smooth" }),
-    surface: Object.freeze({ duration: 14, easing: "smooth" }),
+    motion: Object.freeze({ delay: 0, duration: 4, easing: "easeOut" }),
+    cloud: Object.freeze({ delay: 1.5, duration: 8, easing: "smooth" }),
+    visibility: Object.freeze({ delay: 3, duration: 9, easing: "smooth" }),
+    mist: Object.freeze({ delay: 4.5, duration: 9, easing: "smooth" }),
+    precipitation: Object.freeze({ delay: 6, duration: 4, easing: "smooth" }),
+    surface: Object.freeze({ delay: 8, duration: 14, easing: "smooth" }),
 });
 
 const PROPERTY_GROUP = Object.freeze({
@@ -248,12 +249,12 @@ const PROPERTY_GROUP = Object.freeze({
     windDirection: "motion",
     gustiness: "motion",
     smokeAmount: "motion",
-    fogDensity: "atmosphere",
-    visibility: "atmosphere",
-    horizonHaze: "atmosphere",
-    mistDensity: "atmosphere",
-    mistHeight: "atmosphere",
-    atmosphericDesaturation: "atmosphere",
+    fogDensity: "visibility",
+    visibility: "visibility",
+    horizonHaze: "visibility",
+    atmosphericDesaturation: "visibility",
+    mistDensity: "mist",
+    mistHeight: "mist",
     precipitation: "precipitation",
     rainDensity: "precipitation",
     rainSpeed: "precipitation",
@@ -270,8 +271,11 @@ const PROPERTY_GROUP = Object.freeze({
 function freezeTransition(overrides = {}) {
     return Object.freeze(
         Object.fromEntries(
-            Object.entries({ ...DEFAULT_TRANSITION, ...overrides }).map(
-                ([group, timing]) => [group, Object.freeze({ ...timing })],
+            Object.entries(DEFAULT_TRANSITION).map(
+                ([group, timing]) => [
+                    group,
+                    Object.freeze({ ...timing, ...(overrides[group] ?? {}) }),
+                ],
             ),
         ),
     );
@@ -293,16 +297,27 @@ export const WEATHER_PRESETS = Object.freeze([
         state: null,
         transition: DEFAULT_TRANSITION,
     }),
-    weatherPreset("clear", "Clear", {
-        cloudCoverage: -0.08,
-        cloudHeight: 0.035,
-        cloudScale: 0.92,
-        turbulence: 0.72,
-        windSpeed: 0.55,
-        visibility: 1,
-        horizonHaze: 0.04,
-        dryingRate: 0.2,
-    }),
+    weatherPreset(
+        "clear",
+        "Clear",
+        {
+            cloudCoverage: -0.08,
+            cloudHeight: 0.035,
+            cloudScale: 0.92,
+            turbulence: 0.72,
+            windSpeed: 0.55,
+            visibility: 1,
+            horizonHaze: 0.04,
+            dryingRate: 0.2,
+        },
+        {
+            precipitation: { delay: 0, duration: 3, easing: "easeOut" },
+            mist: { delay: 2, duration: 7, easing: "smooth" },
+            visibility: { delay: 3, duration: 9, easing: "smooth" },
+            cloud: { delay: 4, duration: 10, easing: "smooth" },
+            surface: { delay: 7, duration: 18, easing: "smooth" },
+        },
+    ),
     weatherPreset("haze", "Haze", {
         cloudCoverage: -0.02,
         cloudHeight: 0.02,
@@ -384,10 +399,12 @@ export const WEATHER_PRESETS = Object.freeze([
             dryingRate: 0.04,
         },
         {
-            cloud: { duration: 11, easing: "smooth" },
-            atmosphere: { duration: 12, easing: "smooth" },
-            precipitation: { duration: 6.5, easing: "smooth" },
-            surface: { duration: 18, easing: "smooth" },
+            motion: { delay: 0, duration: 5, easing: "easeOut" },
+            cloud: { delay: 1.5, duration: 11, easing: "smooth" },
+            visibility: { delay: 4, duration: 10, easing: "smooth" },
+            mist: { delay: 5.5, duration: 10, easing: "smooth" },
+            precipitation: { delay: 7, duration: 6.5, easing: "smooth" },
+            surface: { delay: 10, duration: 18, easing: "smooth" },
         },
     ),
     weatherPreset(
@@ -418,9 +435,12 @@ export const WEATHER_PRESETS = Object.freeze([
             dryingRate: 0.08,
         },
         {
-            precipitation: { duration: 3.2, easing: "easeOut" },
-            atmosphere: { duration: 10, easing: "smooth" },
-            surface: { duration: 24, easing: "smooth" },
+            precipitation: { delay: 0, duration: 3.2, easing: "easeOut" },
+            motion: { delay: 1, duration: 5, easing: "easeOut" },
+            cloud: { delay: 2, duration: 11, easing: "smooth" },
+            mist: { delay: 4, duration: 9, easing: "smooth" },
+            visibility: { delay: 5, duration: 10, easing: "smooth" },
+            surface: { delay: 9, duration: 24, easing: "smooth" },
         },
     ),
 ]);
@@ -447,8 +467,17 @@ function easing(name, value) {
 
 function transitionDuration(transition) {
     return Math.max(
-        ...Object.values(transition).map(({ duration }) => duration),
+        ...Object.values(transition).map(
+            ({ delay = 0, duration }) => delay + duration,
+        ),
     );
+}
+
+export function resolveAuthoredWeather(defaultWeatherId = "clear") {
+    const preset = WEATHER_PRESETS.find(
+        ({ id, state }) => id === defaultWeatherId && state,
+    );
+    return normalizeState(preset?.state ?? WEATHER_PRESETS[1].state);
 }
 
 export function extractSceneWeather(sceneState = {}) {
@@ -462,6 +491,7 @@ export function composeWeather(sceneState, weatherState) {
 export class WeatherEngine {
     constructor(nowSeconds = performance.now() / 1000) {
         this.currentId = "scene";
+        this.authoredWeatherId = "clear";
         this.current = null;
         this.from = null;
         this.target = null;
@@ -487,10 +517,38 @@ export class WeatherEngine {
         this.current = { ...this.from };
         this.currentId = preset.id;
         this.target = preset.state ? normalizeState(preset.state) : null;
-        this.transition = preset.transition ?? DEFAULT_TRANSITION;
+        this.transition = preset.id === "scene"
+            ? this.getPreset(this.authoredWeatherId).transition
+            : preset.transition ?? DEFAULT_TRANSITION;
         this.transitionStart = nowSeconds;
         this.transitioning = true;
         return preset.id;
+    }
+
+    setAuthoredWeather(
+        defaultWeatherId,
+        nowSeconds = performance.now() / 1000,
+    ) {
+        const preset = this.getPreset(defaultWeatherId);
+        const authoredPreset = preset.state ? preset : this.getPreset("clear");
+        if (authoredPreset.id === this.authoredWeatherId)
+            return this.authoredWeatherId;
+
+        const previousAuthoredState = resolveAuthoredWeather(
+            this.authoredWeatherId,
+        );
+        const resolved = this.update(nowSeconds, previousAuthoredState);
+        this.authoredWeatherId = authoredPreset.id;
+
+        if (this.currentId === "scene") {
+            this.from = normalizeState(resolved);
+            this.current = { ...this.from };
+            this.target = null;
+            this.transition = authoredPreset.transition ?? DEFAULT_TRANSITION;
+            this.transitionStart = nowSeconds;
+            this.transitioning = true;
+        }
+        return this.authoredWeatherId;
     }
 
     setOverride(key, value) {
@@ -521,8 +579,9 @@ export class WeatherEngine {
                 const group = PROPERTY_GROUP[key];
                 const timing =
                     this.transition[group] ?? DEFAULT_TRANSITION[group];
+                const delayedElapsed = elapsed - (timing.delay ?? 0);
                 const progress =
-                    timing.duration <= 0 ? 1 : elapsed / timing.duration;
+                    timing.duration <= 0 ? 1 : delayedElapsed / timing.duration;
                 const amount = easing(timing.easing, progress);
                 this.current[key] =
                     this.from[key] + (target[key] - this.from[key]) * amount;
