@@ -34,6 +34,7 @@ const travelSpeed = ref(1);
 const moodId = ref("departure");
 const sceneMenuOpen = ref(false);
 const weatherId = ref("scene");
+const authoredWeatherId = ref("clear");
 const weatherMenuOpen = ref(false);
 const weatherFrontMenuOpen = ref(false);
 const weatherFrontId = ref(WEATHER_FRONTS[0].id);
@@ -73,9 +74,16 @@ const statusLabel = computed(() =>
 const selectedMoodName = computed(
     () => MOODS.find((mood) => mood.id === moodId.value)?.name ?? "-",
 );
-const selectedWeatherName = computed(
-    () => WEATHER_PRESETS.find((weather) => weather.id === weatherId.value)?.name ?? "-",
-);
+const selectedWeatherName = computed(() => {
+    const selected = WEATHER_PRESETS.find(
+        (weather) => weather.id === weatherId.value,
+    )?.name ?? "-";
+    if (weatherId.value !== "scene") return selected;
+    const authored = WEATHER_PRESETS.find(
+        (weather) => weather.id === authoredWeatherId.value,
+    )?.name ?? "-";
+    return `${selected} · ${authored}`;
+});
 const selectedWeatherFrontName = computed(
     () =>
         WEATHER_FRONTS.find((front) => front.id === weatherFrontId.value)?.name ??
@@ -251,6 +259,7 @@ async function copyMoodState() {
         ),
         weather: {
             id: stats.weatherId,
+            authoredDefaultId: stats.authoredWeatherId,
             front: stats.weatherFront,
             frozen: stats.weatherFrozen,
             quality: stats.weatherQuality,
@@ -363,6 +372,7 @@ onMounted(async () => {
             weatherFrontId.value = stats.weatherFront.id;
             weatherFrontProgress.value = stats.weatherFront.progress;
             weatherFrontStage.value = stats.weatherFront.weatherId;
+            authoredWeatherId.value = stats.authoredWeatherId;
             cueId.value = stats.cueId;
             cueProgress.value = stats.cueProgress;
             travelRunning.value = stats.travelRunning;
