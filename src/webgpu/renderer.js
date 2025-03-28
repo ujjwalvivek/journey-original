@@ -399,6 +399,22 @@ export class JourneyRenderer {
         this.weatherEngine.clearOverrides();
     }
 
+    resetToAuthoredWeather() {
+        this.weatherFront.setEnabled(false);
+        this.weatherFrozen = false;
+        this.weatherEngine.clearOverrides();
+        const defaultWeatherId = this.resolvedSceneMood.defaultWeatherId;
+        this.weatherEngine.setAuthoredWeather(
+            defaultWeatherId,
+            this.weatherStateTime,
+        );
+        return this.weatherEngine.setWeather(
+            "scene",
+            this.weatherStateTime,
+            resolveAuthoredWeather(defaultWeatherId),
+        );
+    }
+
     setAutoMood(enabled) {
         this.moodEngine.setAutoCycle(false);
         const cue = this.cueTimeline.setEnabled(enabled);
@@ -627,6 +643,7 @@ export class JourneyRenderer {
             gustiness: weather.gustiness,
             precipitation: weather.precipitation,
             rainSpeed: weather.rainSpeed,
+            mistSpeed: weather.mistSpeed,
             wetness: weather.wetness,
             dryingRate: weather.dryingRate,
         });
