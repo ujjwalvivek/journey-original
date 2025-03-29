@@ -647,6 +647,24 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
     undersideCorner * bridgeSurface * 0.62 +
     cornerBloom * 0.16
   );
+  // Moist air expands the light field around the existing pillar and
+  // underside sources. This halo is deliberately broader than bridgeEmission
+  // but remains anchored to the same geometry rather than inventing new
+  // floating bulbs.
+  let pillarHaloY = clamp(bridgeUv.y, 0.112, 0.174);
+  let pillarHaloDistance = length(vec2f(
+    pillarDistance,
+    bridgeUv.y - pillarHaloY
+  ));
+  let pillarMoistureHalo = exp(-pillarHaloDistance * 82.0);
+  let undersideMoistureHalo =
+    exp(-abs(bridgeUv.y - (bridgeDeckY - 0.004)) * 68.0) *
+    cornerReach;
+  let bridgeMoistureHalo = bridgeLift * clamp(
+    pillarMoistureHalo * 0.58 + undersideMoistureHalo * 0.34,
+    0.0,
+    1.0
+  );
   let bridgeWetCurve = bridgeSurface *
     (1.0 - smoothstep(0.00045, 0.0021, abs(bridgeUv.y - bridgeDeckY)));
   let bridgeWetDeck = bridgeSurface *
@@ -791,6 +809,9 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
        headlightBloom * 0.44 + headlightBeamGlow * 0.09) * trainLightVisibility +
     bridgeEmission * weatherLightVisibility * 0.22;
   col += scatterLightColor * scatteredPracticalLight * moistureScatter * 0.32;
+  let bridgeHaloVisibility = (1.0 - fg.a) * weatherLightVisibility;
+  col += scatterLightColor * bridgeMoistureHalo * bridgeHaloVisibility *
+    moistureScatter * 0.14;
 
   // Shadertoy Buffer A feedback. Because WebGPU render-target textures use a
   // top-left texture origin, flip the Shadertoy-style Y coordinate back when
