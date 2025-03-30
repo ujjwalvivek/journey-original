@@ -41,6 +41,7 @@ test("the weather lab exposes only shader-backed controls", () => {
         "rainContrast",
         "foregroundRainAmount",
         "atmosphericDesaturation",
+        "mistSpeed",
         "wetness",
         "lightScatter",
         "dryingRate",

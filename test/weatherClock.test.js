@@ -33,6 +33,15 @@ test("precipitation amount never changes rain velocity", () => {
     assert.equal(dryClock.precipitationTime, stormClock.precipitationTime);
 });
 
+test("mist speed scales future mist motion without scrubbing its phase", () => {
+    const clock = new WeatherClock();
+    clock.advance(0.1, { windSpeed: 1, mistSpeed: 0.5 });
+    const slowAdvance = clock.mistTime;
+    clock.advance(0.1, { windSpeed: 1, mistSpeed: 2 });
+    const fastAdvance = clock.mistTime - slowAdvance;
+    assert.ok(Math.abs(fastAdvance / slowAdvance - 4) < Number.EPSILON);
+});
+
 test("surfaces absorb precipitation and dry at the authored rate", () => {
     const clock = new WeatherClock();
     for (let frame = 0; frame < 20; frame += 1)
