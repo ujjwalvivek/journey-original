@@ -230,9 +230,12 @@ function clearMoodOverrides() {
     renderer?.clearMoodOverrides();
 }
 
-function clearAuthoringOverrides() {
-    clearMoodOverrides();
-    renderer?.clearWeatherOverrides();
+function resetToAuthoredWeather() {
+    if (!renderer) return;
+    renderer.resetToAuthoredWeather();
+    weatherFrontEnabled.value = false;
+    weatherFrozen.value = false;
+    weatherId.value = "scene";
 }
 
 async function copyMoodState() {
@@ -988,7 +991,14 @@ onBeforeUnmount(() => {
                             </template>
 
                             <div class="button-row sticky-actions">
-                                <button type="button" @click="clearAuthoringOverrides">
+                                <button
+                                    v-if="labMode === 'weather'"
+                                    type="button"
+                                    @click="resetToAuthoredWeather"
+                                >
+                                    CLEAR OVERRIDES
+                                </button>
+                                <button v-else type="button" @click="clearMoodOverrides">
                                     CLEAR OVERRIDES
                                 </button>
                                 <button type="button" @click="copyMoodState">
