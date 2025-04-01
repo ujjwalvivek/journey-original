@@ -1,8 +1,22 @@
+const clamp = (value, minimum, maximum) =>
+    Math.max(minimum, Math.min(maximum, Number(value) || 0));
+
+export function resolveGust(gustTime, gustiness) {
+    const strength = clamp(gustiness, 0, 1);
+    if (strength <= 0) return 0;
+    const phase = Math.max(0, Number(gustTime) || 0);
+    const wave = 0.5 + 0.5 * Math.sin(
+        phase * 1.7 + Math.sin(phase * 0.37) * 1.4,
+    );
+    return strength * (0.35 + wave * 0.65);
+}
+
 export class WeatherClock {
     constructor() {
         this.weatherTime = 0;
         this.precipitationTime = 0;
         this.gustTime = 0;
+        this.gustValue = 0;
         this.mistTime = 0;
         this.surfaceWetness = 0;
     }
@@ -12,6 +26,7 @@ export class WeatherClock {
         {
             weatherSpeed = 1,
             windSpeed = 1,
+            windDirection = 1,
             gustiness = 0,
             precipitation = 0,
             rainSpeed = 1,
@@ -23,6 +38,8 @@ export class WeatherClock {
         const safeDelta = Math.max(0, Math.min(0.1, Number(delta) || 0));
         const safeWeatherSpeed = Math.max(0, Number(weatherSpeed) || 0);
         const safeWindSpeed = Math.max(0, Number(windSpeed) || 0);
+        const safeWindDirection = clamp(windDirection, -1, 1);
+        const safeGustiness = clamp(gustiness, 0, 1);
         this.weatherTime += safeDelta * safeWeatherSpeed;
         // Amount controls how much rain is visible, never how quickly the
         // phase advances. Coupling these made a transitioning storm appear to
@@ -31,10 +48,13 @@ export class WeatherClock {
             * Math.max(0, Number(rainSpeed) || 0);
         this.gustTime += safeDelta
             * Math.max(0.1, safeWindSpeed)
-            * (0.5 + Math.max(0, Number(gustiness) || 0) * 1.5);
+            * (0.5 + safeGustiness * 1.5);
+        this.gustValue = resolveGust(this.gustTime, safeGustiness);
         this.mistTime += safeDelta
             * Math.max(0, Number(mistSpeed) || 0)
-            * Math.max(0.12, safeWindSpeed * 0.28);
+            * Math.max(0.12, safeWindSpeed * 0.28)
+            * safeWindDirection
+            * (1 + this.gustValue * 0.65);
         const precipitationAmount = Math.max(
             0,
             Math.min(1, Number(precipitation) || 0),
@@ -66,6 +86,7 @@ export class WeatherClock {
         this.weatherTime = 0;
         this.precipitationTime = 0;
         this.gustTime = 0;
+        this.gustValue = 0;
         this.mistTime = 0;
         this.surfaceWetness = 0;
     }

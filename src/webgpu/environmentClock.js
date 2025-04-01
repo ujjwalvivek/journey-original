@@ -12,19 +12,28 @@ export class EnvironmentClock {
             travelRunning = true,
             travelSpeed = 1,
             windSpeed = 1,
+            windDirection = 1,
+            gust = 0,
         } = {},
     ) {
         const safeDelta = Math.max(0, Math.min(0.1, Number(delta) || 0));
+        const safeWindDirection = Math.max(
+            -1,
+            Math.min(1, Number(windDirection) || 0),
+        );
+        const safeGust = Math.max(0, Math.min(1, Number(gust) || 0));
+        const windRate = Math.max(0, Number(windSpeed) || 0)
+            * safeWindDirection
+            * (1 + safeGust * 0.65);
         if (travelRunning) {
             this.travelTime += safeDelta * Math.max(0, travelSpeed);
             this.foregroundPhase += safeDelta * Math.max(0, travelSpeed) * 4;
-        } else {
-            // While the train is holding, the nearest cloud field falls back
-            // to the distant layer's screen-space wind speed (its time phase
-            // is divided by ten inside the background shader).
-            this.foregroundPhase += safeDelta * Math.max(0, windSpeed) * 0.06;
         }
-        this.windPhase += safeDelta * Math.max(0, windSpeed);
+        // Wind remains additive to foreground parallax while travelling and
+        // becomes its only motion while holding. Accumulating the signed rate
+        // prevents a direction change from scrubbing the cloud field.
+        this.foregroundPhase += safeDelta * windRate * 0.06;
+        this.windPhase += safeDelta * windRate;
         const smokeTarget = travelRunning ? 1 : 0;
         const smokeRate = travelRunning ? 0.7 : 0.42;
         const smokeStep = safeDelta * smokeRate;

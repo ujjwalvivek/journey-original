@@ -14,6 +14,7 @@ import {
 } from "../weather/weatherEngine.js";
 import { WeatherClock } from "../weather/weatherClock.js";
 import { WeatherFront } from "../weather/weatherFront.js";
+import { advanceSimulationClocks } from "../weather/weatherSimulation.js";
 
 const BUFFER_FORMAT = "rgba16float";
 const UNIFORM_FLOATS = 104;
@@ -638,14 +639,14 @@ export class JourneyRenderer {
             resolveAuthoredWeather(sceneMood.defaultWeatherId),
         );
         this.resolvedSceneMood = sceneMood;
-        this.weatherClock.advance(this.weatherFrozen ? 0 : delta, {
-            windSpeed: weather.windSpeed,
-            gustiness: weather.gustiness,
-            precipitation: weather.precipitation,
-            rainSpeed: weather.rainSpeed,
-            mistSpeed: weather.mistSpeed,
-            wetness: weather.wetness,
-            dryingRate: weather.dryingRate,
+        const cueTravelScale = this.cueTimeline.enabled
+            ? cueState.cue.travelScale
+            : 1;
+        advanceSimulationClocks(this.clock, this.weatherClock, delta, {
+            weatherFrozen: this.weatherFrozen,
+            travelRunning: this.travelRunning,
+            travelSpeed: this.travelSpeed * cueTravelScale,
+            weather,
         });
         const renderedWeather = {
             ...weather,
@@ -655,14 +656,6 @@ export class JourneyRenderer {
         // Keep authored weather targets stable for controls/export. The shader
         // receives renderedWeather, whose wetness is the physical integrator.
         this.resolvedWeather = weather;
-        const cueTravelScale = this.cueTimeline.enabled
-            ? cueState.cue.travelScale
-            : 1;
-        this.clock.advance(delta, {
-            travelRunning: this.travelRunning,
-            travelSpeed: this.travelSpeed * cueTravelScale,
-            windSpeed: mood.windSpeed,
-        });
         this.writeUniforms(mood);
 
         const writeIndex = 1 - this.readIndex;
