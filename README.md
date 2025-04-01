@@ -1,10 +1,10 @@
-# Journey Original
+<!--markdownlint-disable MD013-->
+
+# Journey: The Original Portfolio
 
 ![Showcase](media/showcase.gif)
 
-The renderer keeps the reconstructed Shadertoy pipeline intact while the public
-default is now an authored **Departure** scene. A hidden neutral shader base is
-used only as a development reference and as the zero-intensity blend target.
+A WebGPU and WGSL diorama built around movement, atmosphere, and directed changes in weather and light. The public default is the authored **Departure** scene.
 
 - **Buffer A iChannel0:** the exact source texture's sampled red channel, losslessly stored as a 1024×1024 grayscale PNG, **Linear + Repeat + VFlip ON**.
 - **Buffer A iChannel1:** the previous Buffer A frame, **Linear + Clamp + VFlip OFF**, using true ping-pong render targets.
@@ -13,13 +13,18 @@ used only as a development reference and as the zero-intensity blend target.
 - Offscreen Buffer A uses `rgba16float` so temporal accumulation is not forced through an 8-bit intermediate.
 - Internal rendering preserves aspect ratio while capping the two half-float feedback targets to a 2560×1440 pixel budget.
 
-## Added controls
+## Current systems
 
-- Start / stop the train journey (freezes the Shadertoy scene clock without stopping the renderer).
+- Start or stop the train without stopping the world: journey distance pauses, smoke fades naturally, and rain, mist, wind, gusts, and cloud evolution keep moving on independent clocks.
 - Travel speed from 0.10× to 2.50×.
-- Authored environmental moods: Departure, Ember, Blue Hour, Sakura, Monsoon, Night Rail.
-- Run an authored cue journey through Departure, Ember, Sakura, Monsoon, Blue Hour, and Night Rail with per-cue pacing and property-group transitions.
-  - When enabled, the experience follows this sequence, respecting the mood transitions parameters:
+- Authored scenes: Departure, Ember, Blue Hour, Sakura, Monsoon, and Night Rail, each with an explicit default physical-weather state.
+- Independent weather presets: Clear, Haze, Overcast, Drizzle, Monsoon, and Clearing, plus the weather attached to the selected scene.
+- Atmospheric depth through visibility, fog, horizon haze, moving low mist, atmospheric desaturation, and moisture-driven light scattering.
+- Three depth bands of analytic rain with authored density, contrast, angle, streak length, depth bias, and foreground amount.
+- Signed wind and a living gust field shared by clouds, rain, mist, and train smoke rather than timeline scrubbing.
+- Wetness that accumulates behind rainfall and dries independently, with deck sheen, wet-edge treatment, broken window-light reflections, and broader practical-light halos in moisture.
+- Staged, interruption-safe weather transitions and authored Passing Shower, Monsoon Front, and Quiet Air weather-front sequences.
+- Cue a journey through Departure, Ember, Sakura, Monsoon, Blue Hour, and Night Rail with per-cue pacing and property-group transitions. When enabled, the experience follows this sequence and respects its authored transition profiles:
 
     | Cue        | Duration | Travel pace |
     | ---------- | -------- | ----------- |
@@ -31,14 +36,13 @@ used only as a development reference and as the zero-intensity blend target.
     | Night Rail |      42s |       0.66× |
 
 - Mood intensity across world structure and explicit scene palettes for sky, clouds, smoke, train materials, bridge, fog, and practical lights.
-- A Mood Lab for live structural authoring and JSON snapshot export.
+- An Engine Lab with separate Scene and Weather direction, grouped live controls, palette editing, weather freezing, front-stage control, weather reset, quality selection, and JSON snapshot export.
 - Temporal feedback amount.
 - Vignette strength.
 - Reset journey / feedback history.
 - PNG capture.
-- HUD toggle and keyboard shortcuts.
-- Animated wheel rims tied to journey distance.
-- A Canvas 2D platform notice when WebGPU is unavailable.
+- Collapsible side-panel HUD with keyboard shortcuts and hover recovery when hidden.
+- A deliberately reduced Canvas 2D platform notice when WebGPU is unavailable.
 
 ### Keyboard
 
@@ -53,15 +57,10 @@ used only as a development reference and as the zero-intensity blend target.
 npm install
 npm run dev
 npm run preview
-```
 
-Run the deterministic mood-state tests with:
-
-```bash
-node test/moodEngine.test.js
-node test/renderBudget.test.js
-node test/environmentClock.test.js
-node test/cueTimeline.test.js
+# Run the repository-owned WGSL validation suites
+# Requires a Rust toolchain
+npm test
 ```
 
 ## License

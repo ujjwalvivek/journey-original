@@ -1,0 +1,8 @@
+[package]
+name = "journey-wgsl-validator"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+naga = { version = "27.0.3", features = ["wgsl-in"] }

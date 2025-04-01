@@ -4,3 +4,5 @@ dist/
 *-lock.json
 reference/
 .env.local
+tools/wgsl-validator/target/
+*.lock
