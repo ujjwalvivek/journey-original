@@ -169,12 +169,31 @@ fn wheelMotionMask(pointIn: vec2f, radius: f32, angle: f32) -> f32 {
   return clamp((spokes * spokeReach + hub * 0.42) * inside, 0.0, 1.0);
 }
 
+fn livingGust(uv: vec2f) -> f32 {
+  let strength = clamp(uniforms.weatherDynamics.z, 0.0, 1.0);
+  let phase = max(uniforms.weatherTimes.z, 0.0);
+  let broadWave = 0.5 + 0.5 * sin(
+    phase * 1.7 + sin(phase * 0.37) * 1.4
+  );
+  let spatialVariation = 0.78 + 0.22 * sin(
+    uv.y * 5.3 + uv.x * 1.7 + phase * 0.61
+  );
+  return strength * (0.35 + broadWave * 0.65) * spatialVariation;
+}
+
 fn cloudCoordinates(uv: vec2f, time: f32, distance: f32, offset: f32) -> vec2f {
   // Scale the noise field isotropically around a stable screen-space anchor.
   // This changes cloud feature size without stretching the composed image.
   let scale = max(uniforms.atmosphere.z, 0.05);
   let anchor = vec2f(0.5, 0.5);
-  return (uv - anchor) / scale + anchor + vec2f(time / distance + offset, 0.0);
+  let gust = livingGust(uv);
+  let windDirection = clamp(uniforms.weatherDynamics.y, -1.0, 1.0);
+  let gustWarp = vec2f(
+    windDirection * gust * 0.018,
+    sin(uv.x * 7.0 + uniforms.weatherTimes.z * 0.83) * gust * 0.009
+  );
+  return (uv - anchor) / scale + anchor +
+    vec2f(time / distance + offset, 0.0) + gustWarp;
 }
 
 fn cloudTone(tIn: f32) -> vec3f {
@@ -367,10 +386,10 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let rainContrast = mix(0.55, 1.45, clamp(uniforms.weatherDetail.z, 0.0, 1.0));
   let foregroundRainAmount = clamp(uniforms.weatherDetail.w, 0.0, 1.0);
   let windDirection = clamp(uniforms.weatherDynamics.y, -1.0, 1.0);
-  let gustStrength = clamp(uniforms.weatherDynamics.z, 0.0, 1.0);
+  let gustStrength = livingGust(uv);
   let rainSlant = clamp(
     uniforms.weatherDynamics.x * 0.52 +
-    windDirection * (0.09 + gustStrength * 0.12),
+    windDirection * (0.09 + gustStrength * 0.16),
     -0.72,
     0.72
   );
@@ -596,15 +615,26 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
 
   var dist = 5.0;
   let smokeT = uniforms.travelTime * 3.8 + uniforms.subject.w * 0.2;
-  uv2 = trainUv + vec2f(smokeT / dist + 3.5, 0.0);
+  // Preserve the original FBM plume and bend its sampling domain as one
+  // continuous body. Direction 1 is the authored/original trailing shape;
+  // opposing wind progressively shears the plume without spawning a second
+  // lobe at the neutral slider position.
+  let smokeRise = max(trainUv.y - 0.12, 0.0);
+  let smokeWindStrength = clamp(uniforms.motion.x / 2.5, 0.0, 1.0);
+  let smokeGust = livingGust(trainUv);
+  let smokeWindShift = (1.0 - windDirection) * smokeWindStrength *
+    smokeRise * 0.65;
+  let smokeUv = trainUv - vec2f(smokeWindShift, 0.0);
+  uv2 = smokeUv + vec2f(smokeT / dist + 3.5, 0.0);
   uv2.x -= smokeT / dist * 0.2;
+  uv2.x += windDirection * smokeGust * 0.025;
   let smokeAmount = clamp(uniforms.motion.y, 0.0, 1.5);
   let smokeOpacity = smoothstep(0.0, 0.22, smokeAmount);
   let h = fbm2(uv2, 8) - (0.65 - smokeAmount * 0.1);
 
-  if (trainUv.x < 0.49 && smokeAmount > 0.001) {
-    let x = -trainUv.x + 0.49;
-    let y = abs(trainUv.y + h * 0.4 - 0.16 * sqrt(x) - 0.12) - 0.8 * x * exp(-x * 10.0);
+  if (smokeUv.x < 0.49 && smokeAmount > 0.001) {
+    let x = -smokeUv.x + 0.49;
+    let y = abs(smokeUv.y + h * 0.4 - 0.16 * sqrt(x) - 0.12) - 0.8 * x * exp(-x * 10.0);
     if (y < 0.0) { col = mix(col, uniforms.smokeLight.rgb, smokeOpacity); }
     if (y < -0.02) { col = mix(col, uniforms.smokeShadow.rgb, smokeOpacity); }
   }
@@ -690,10 +720,12 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   );
 
   let mistHeight = mix(0.015, 0.19, clamp(uniforms.weatherAtmosphere.w, 0.0, 1.0));
-  let mistWind = mix(-1.0, 1.0, clamp(uniforms.weatherDynamics.y * 0.5 + 0.5, 0.0, 1.0));
+  let mistGust = livingGust(uv);
   let mistUv = vec2f(
-    uv.x * 1.8 + uniforms.weatherTimes.w * 0.055 * mistWind,
-    uv.y * 5.2 + uniforms.weatherTimes.x * 0.008
+    uv.x * 1.8 + uniforms.weatherTimes.w * 0.055 +
+      windDirection * mistGust * 0.026,
+    uv.y * 5.2 + uniforms.weatherTimes.x * 0.008 +
+      sin(uv.x * 4.6 + uniforms.weatherTimes.z * 0.74) * mistGust * 0.014
   );
   let mistNoise = fbm2(mistUv + vec2f(18.7, 4.3), 5);
   let mistBand = 1.0 - smoothstep(0.035, 0.24, abs(uv.y - mistHeight));
