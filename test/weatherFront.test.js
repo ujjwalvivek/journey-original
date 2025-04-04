@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { WEATHER_FRONTS, WeatherFront } from "../src/weather/weatherFront.js";
-import { WEATHER_PRESETS } from "../src/weather/weatherEngine.js";
+import {
+    WEATHER_PRESETS,
+    WEATHER_STATE_KEYS,
+    WeatherEngine,
+    resolveAuthoredWeather,
+} from "../src/weather/weatherEngine.js";
 
 test("weather fronts reference authored stages with positive durations", () => {
     const presetIds = new Set(WEATHER_PRESETS.map(({ id }) => id));
@@ -47,4 +52,24 @@ test("front stages can be advanced deterministically for authoring", () => {
     const update = front.advance(0);
     assert.equal(update.changed, true);
     assert.equal(update.stage.weatherId, "drizzle");
+});
+
+test("interrupting a front transition continues from its resolved state", () => {
+    const clear = resolveAuthoredWeather("clear");
+    const front = new WeatherFront("passing-shower");
+    const engine = new WeatherEngine(0);
+    engine.update(0, clear);
+
+    front.setEnabled(true);
+    const overcastStage = front.advance(0);
+    engine.setWeather(overcastStage.stage.weatherId, 0, clear);
+    const partiallyOvercast = engine.update(4, clear);
+
+    front.next();
+    const drizzleStage = front.advance(0);
+    engine.setWeather(drizzleStage.stage.weatherId, 4, clear);
+    const resumed = engine.update(4, clear);
+
+    for (const key of WEATHER_STATE_KEYS)
+        assert.equal(resumed[key], partiallyOvercast[key], key);
 });

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { WeatherClock } from "../src/weather/weatherClock.js";
+import {
+    WeatherClock,
+    resolveGust,
+} from "../src/weather/weatherClock.js";
 
 test("weather phases advance independently from journey travel", () => {
     const clock = new WeatherClock();
@@ -14,7 +17,10 @@ test("weather phases advance independently from journey travel", () => {
     assert.equal(clock.weatherTime, 0.1);
     assert.equal(clock.precipitationTime, 0.15000000000000002);
     assert.equal(clock.gustTime, 0.25);
-    assert.ok(Math.abs(clock.mistTime - 0.0448) < Number.EPSILON);
+    assert.equal(clock.gustValue, resolveGust(0.25, 0.5));
+    const expectedMist = 0.1 * 0.8 * 0.56 *
+        (1 + clock.gustValue * 0.65);
+    assert.ok(Math.abs(clock.mistTime - expectedMist) < 1e-12);
 });
 
 test("weather clock clamps unsafe frame deltas and resets", () => {

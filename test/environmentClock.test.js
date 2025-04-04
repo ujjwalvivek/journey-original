@@ -57,11 +57,32 @@ test("smoke ramps up and down instead of switching abruptly", () => {
     assert.equal(clock.smokeLevel, 0);
 });
 
-test("foreground clouds switch from journey motion to distant wind motion", () => {
+test("foreground clouds combine journey parallax with continuous wind motion", () => {
     const clock = new EnvironmentClock();
     clock.advance(0.1, { travelRunning: true, travelSpeed: 2, windSpeed: 3 });
-    assert.equal(clock.foregroundPhase, 0.8);
+    assert.ok(Math.abs(clock.foregroundPhase - 0.818) < 1e-12);
 
     clock.advance(0.1, { travelRunning: false, travelSpeed: 2, windSpeed: 3 });
-    assert.ok(Math.abs(clock.foregroundPhase - 0.818) < 1e-12);
+    assert.ok(Math.abs(clock.foregroundPhase - 0.836) < 1e-12);
+});
+
+test("wind direction changes future displacement without scrubbing", () => {
+    const clock = new EnvironmentClock();
+    clock.advance(0.1, { windSpeed: 2, windDirection: 1 });
+    const beforeReversal = clock.windPhase;
+    assert.equal(beforeReversal, 0.2);
+
+    clock.advance(0, { windSpeed: 2, windDirection: -1 });
+    assert.equal(clock.windPhase, beforeReversal);
+    clock.advance(0.1, { windSpeed: 2, windDirection: -1 });
+    assert.equal(clock.windPhase, 0);
+});
+
+test("gusts accelerate wind without changing its authored direction", () => {
+    const calm = new EnvironmentClock();
+    const gusting = new EnvironmentClock();
+    calm.advance(0.1, { windSpeed: 1, windDirection: -1, gust: 0 });
+    gusting.advance(0.1, { windSpeed: 1, windDirection: -1, gust: 1 });
+    assert.ok(gusting.windPhase < calm.windPhase);
+    assert.ok(gusting.foregroundPhase < calm.foregroundPhase);
 });
