@@ -6,7 +6,10 @@
     "scripts": {
         "dev": "vite",
         "build": "vite build",
-        "preview": "vite preview"
+        "preview": "vite preview",
+        "test": "npm run test:unit && npm run test:shaders",
+        "test:unit": "node --test",
+        "test:shaders": "cargo run --quiet --manifest-path tools/wgsl-validator/Cargo.toml -- src/shaders/fullscreen.wgsl src/shaders/bufferA.wgsl src/shaders/image.wgsl"
     },
     "dependencies": {
         "vue": "^3.5.21"
