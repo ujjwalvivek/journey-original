@@ -17,7 +17,7 @@ import { WeatherFront } from "../weather/weatherFront.js";
 import { advanceSimulationClocks } from "../weather/weatherSimulation.js";
 
 const BUFFER_FORMAT = "rgba16float";
-const UNIFORM_FLOATS = 104;
+const UNIFORM_FLOATS = 116;
 const UNIFORM_BYTES = UNIFORM_FLOATS * 4;
 
 export class JourneyRenderer {
@@ -34,6 +34,7 @@ export class JourneyRenderer {
         this.uniformData = new Float32Array(UNIFORM_FLOATS);
 
         this.noiseTexture = null;
+        this.captureTexture = null;
         this.feedbackTextures = [];
         this.feedbackBindGroups = [];
         this.imageBindGroups = [];
@@ -72,9 +73,20 @@ export class JourneyRenderer {
         this.travelSpeed = 1;
         this.feedbackAmount = 0.3;
         this.vignetteStrength = 1;
+        this.captureTransition = {
+            active: false,
+            progress: 0,
+            startedAt: null,
+            duration: 0.5,
+            rect: [0, 0, 1, 1],
+            frame: [0, 0, 0, 0],
+            onStarted: null,
+            onComplete: null,
+        };
 
         this.frameHandle = 0;
         this.running = false;
+        this.presentationPausedAt = null;
         this.lastFrameAt = 0;
         this.fps = 0;
         this.fpsAccumulator = 0;
@@ -154,6 +166,19 @@ export class JourneyRenderer {
             magFilter: "linear",
             minFilter: "linear",
         });
+
+        this.captureTexture = this.device.createTexture({
+            label: "capture-placeholder",
+            size: [1, 1, 1],
+            format: "rgba8unorm",
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+        });
+        this.device.queue.writeTexture(
+            { texture: this.captureTexture },
+            new Uint8Array([0, 0, 0, 255]),
+            { bytesPerRow: 4 },
+            [1, 1, 1],
+        );
 
         const bufferModule = this.device.createShaderModule({
             label: "buffer-a-wgsl",
@@ -273,6 +298,14 @@ export class JourneyRenderer {
             }),
         );
 
+        this.createImageBindGroups();
+
+        this.readIndex = 0;
+        this.clearFeedback();
+    }
+
+    createImageBindGroups() {
+        if (!this.captureTexture || this.feedbackTextures.length !== 2) return;
         this.imageBindGroups = this.feedbackTextures.map((texture) =>
             this.device.createBindGroup({
                 label: "image-bind-group",
@@ -281,12 +314,51 @@ export class JourneyRenderer {
                     { binding: 0, resource: { buffer: this.uniformBuffer } },
                     { binding: 1, resource: this.sourceSampler },
                     { binding: 2, resource: texture.createView() },
+                    { binding: 3, resource: this.captureTexture.createView() },
+                    { binding: 4, resource: this.noiseSampler },
+                    { binding: 5, resource: this.noiseTexture.createView() },
                 ],
             }),
         );
+    }
 
-        this.readIndex = 0;
-        this.clearFeedback();
+    setCaptureImage(imageBitmap) {
+        if (!this.device || !imageBitmap) return false;
+        const texture = this.device.createTexture({
+            label: "capture-still",
+            size: [imageBitmap.width, imageBitmap.height, 1],
+            format: "rgba8unorm",
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+        });
+        this.device.queue.copyExternalImageToTexture(
+            { source: imageBitmap },
+            { texture },
+            [imageBitmap.width, imageBitmap.height],
+        );
+        this.captureTexture?.destroy();
+        this.captureTexture = texture;
+        this.createImageBindGroups();
+        return true;
+    }
+
+    beginCaptureTransition(
+        { rect, frame, duration = 0.5 } = {},
+        { onStarted = null, onComplete = null } = {},
+    ) {
+        this.captureTransition = {
+            active: true,
+            progress: 0,
+            startedAt: null,
+            duration: Math.max(0.1, Number(duration) || 0.5),
+            rect: Array.isArray(rect) && rect.length === 4
+                ? rect.map(Number)
+                : [0, 0, 1, 1],
+            frame: Array.isArray(frame) && frame.length === 4
+                ? frame.map(Number)
+                : [0, 0, 0, 0],
+            onStarted,
+            onComplete,
+        };
     }
 
     clearFeedback() {
@@ -321,6 +393,23 @@ export class JourneyRenderer {
     stopRenderer() {
         this.running = false;
         cancelAnimationFrame(this.frameHandle);
+    }
+
+    pausePresentation(nowSeconds = performance.now() / 1000) {
+        if (!this.running) return false;
+        this.presentationPausedAt = nowSeconds;
+        this.stopRenderer();
+        return true;
+    }
+
+    resumePresentation(nowSeconds = performance.now() / 1000) {
+        if (this.presentationPausedAt !== null) {
+            this.moodEngine.delayTimeline(
+                Math.max(0, nowSeconds - this.presentationPausedAt),
+            );
+            this.presentationPausedAt = null;
+        }
+        this.startRenderer();
     }
 
     setTravelRunning(value) {
@@ -495,6 +584,7 @@ export class JourneyRenderer {
         this.resizeObserver.disconnect();
         this.feedbackTextures.forEach((texture) => texture.destroy());
         this.noiseTexture?.destroy();
+        this.captureTexture?.destroy();
         this.uniformBuffer?.destroy();
     }
 
@@ -589,6 +679,15 @@ export class JourneyRenderer {
         this.uniformData[102] = mood.rainContrast;
         this.uniformData[103] = mood.foregroundRainAmount;
 
+        for (let index = 0; index < 4; index += 1) {
+            this.uniformData[104 + index] = this.captureTransition.rect[index];
+            this.uniformData[108 + index] = this.captureTransition.frame[index];
+        }
+        this.uniformData[112] = this.captureTransition.progress;
+        this.uniformData[113] = this.captureTransition.active ? 1 : 0;
+        this.uniformData[114] = 0.075;
+        this.uniformData[115] = 0.88;
+
         this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
     }
 
@@ -656,6 +755,21 @@ export class JourneyRenderer {
         // Keep authored weather targets stable for controls/export. The shader
         // receives renderedWeather, whose wetness is the physical integrator.
         this.resolvedWeather = weather;
+        let captureStarted = false;
+        if (this.captureTransition.active) {
+            if (this.captureTransition.startedAt === null) {
+                this.captureTransition.startedAt = nowSeconds;
+                captureStarted = true;
+            }
+            this.captureTransition.progress = Math.min(
+                1,
+                Math.max(
+                    0,
+                    (nowSeconds - this.captureTransition.startedAt) /
+                        this.captureTransition.duration,
+                ),
+            );
+        }
         this.writeUniforms(mood);
 
         const writeIndex = 1 - this.readIndex;
@@ -697,6 +811,20 @@ export class JourneyRenderer {
 
         this.device.queue.submit([encoder.finish()]);
         this.readIndex = writeIndex;
+        if (captureStarted) {
+            const onStarted = this.captureTransition.onStarted;
+            this.captureTransition.onStarted = null;
+            onStarted?.();
+        }
+        if (
+            this.captureTransition.active &&
+            this.captureTransition.progress >= 1
+        ) {
+            const onComplete = this.captureTransition.onComplete;
+            this.captureTransition.active = false;
+            this.captureTransition.onComplete = null;
+            onComplete?.();
+        }
         this.frameHandle = requestAnimationFrame(this.render);
     }
 }

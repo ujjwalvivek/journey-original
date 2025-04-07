@@ -445,6 +445,12 @@ export class MoodEngine {
         this.cycleSeconds = Math.max(5, Math.min(60, Number(value) || 14));
     }
 
+    delayTimeline(seconds) {
+        const delay = Math.max(0, Number(seconds) || 0);
+        this.transitionStart += delay;
+        this.lastCycle += delay;
+    }
+
     setOverride(key, value) {
         if (AUTHORABLE_COLOR_KEYS.has(key)) {
             if (
