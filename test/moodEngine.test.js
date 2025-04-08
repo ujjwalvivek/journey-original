@@ -81,6 +81,19 @@ test("auto cycling advances to the next authored mood", () => {
     assert.equal(state.id, "ember");
 });
 
+test("presentation pauses delay transitions and automatic cycling", () => {
+    const engine = new MoodEngine(0);
+    engine.setMood("monsoon", 0);
+    engine.setAutoCycle(true, 0);
+    const beforePause = engine.update(2);
+
+    engine.delayTimeline(8);
+    const afterPause = engine.update(10);
+
+    assert.deepEqual(afterPause, beforePause);
+    assert.equal(afterPause.id, "monsoon");
+});
+
 test("authoring overrides are clamped and can be cleared", () => {
     const engine = new MoodEngine(0);
     engine.setIntensity(1);
