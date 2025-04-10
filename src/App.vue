@@ -60,6 +60,19 @@ const authoringValues = ref({});
 const authoringColors = ref({});
 const weatherValues = ref({});
 const copyStatus = ref("COPY STATE");
+const capturePhase = ref("idle");
+const captureUrl = ref("");
+const captureFilename = ref("");
+const captureGeometry = ref({
+    left: 0,
+    top: 0,
+    width: 0,
+    height: 0,
+    padding: 0,
+    footer: 0,
+});
+const captureButton = ref(null);
+const captureDownloadButton = ref(null);
 
 let renderer = null;
 let statsTimer = 0;
@@ -89,6 +102,15 @@ const selectedWeatherFrontName = computed(
         WEATHER_FRONTS.find((front) => front.id === weatherFrontId.value)?.name ??
         "-",
 );
+const captureActive = computed(() => capturePhase.value !== "idle");
+const captureStyle = computed(() => ({
+    "--capture-left": `${captureGeometry.value.left}px`,
+    "--capture-top": `${captureGeometry.value.top}px`,
+    "--capture-width": `${captureGeometry.value.width}px`,
+    "--capture-height": `${captureGeometry.value.height}px`,
+    "--capture-padding": `${captureGeometry.value.padding}px`,
+    "--capture-footer": `${captureGeometry.value.footer}px`,
+}));
 
 function toggleTravel() {
     travelRunning.value = !travelRunning.value;
@@ -164,19 +186,132 @@ function closeWeatherFrontMenu(event) {
     }
 }
 
+function updateCaptureGeometry() {
+    if (!captureUrl.value || !canvas.value) return;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const ratio = canvas.value.width / Math.max(1, canvas.value.height);
+    const padding = Math.max(12, Math.min(28, viewportWidth * 0.018));
+    const footer = Math.max(70, Math.min(124, viewportHeight * 0.105));
+    const maximumOuterWidth = Math.min(viewportWidth * 0.86, 1180);
+    const maximumOuterHeight = viewportHeight * 0.88;
+    const maximumImageWidth = Math.max(1, maximumOuterWidth - padding * 2);
+    const maximumImageHeight = Math.max(
+        1,
+        maximumOuterHeight - padding - footer,
+    );
+    const imageWidth = Math.min(
+        maximumImageWidth,
+        maximumImageHeight * ratio,
+    );
+    const imageHeight = imageWidth / ratio;
+    const width = imageWidth + padding * 2;
+    const height = imageHeight + padding + footer;
+    captureGeometry.value = {
+        left: (viewportWidth - width) / 2,
+        top: (viewportHeight - height) / 2,
+        width,
+        height,
+        padding,
+        footer,
+    };
+}
+
+function clearCapture() {
+    if (captureUrl.value) URL.revokeObjectURL(captureUrl.value);
+    captureUrl.value = "";
+    captureFilename.value = "";
+    capturePhase.value = "idle";
+}
+
 async function captureStill() {
-    if (!renderer) return;
+    if (!renderer || captureActive.value || state.value !== "ready") return;
+    capturePhase.value = "capturing";
+    renderer.pausePresentation();
+    let pendingUrl = "";
     try {
         const blob = await renderer.capturePng();
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = `journey-${Date.now()}.png`;
-        link.click();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        pendingUrl = URL.createObjectURL(blob);
+        const preview = new Image();
+        preview.src = pendingUrl;
+        try {
+            await preview.decode();
+        } catch {
+            // The decoded image is an animation nicety; the Blob URL remains
+            // a valid fallback on browsers without decode() support.
+        }
+        const bitmap = await createImageBitmap(blob);
+        renderer.setCaptureImage(bitmap);
+        bitmap.close();
+        captureUrl.value = pendingUrl;
+        pendingUrl = "";
+        captureFilename.value = `journey-${Date.now()}.png`;
+        updateCaptureGeometry();
+        capturePhase.value = "opening";
+        await nextTick();
+        window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => {
+                if (capturePhase.value !== "opening") return;
+                capturePhase.value = "review";
+                captureDownloadButton.value?.focus({ preventScroll: true });
+            });
+        });
     } catch (error) {
         console.error(error);
+        if (pendingUrl) URL.revokeObjectURL(pendingUrl);
+        clearCapture();
+        renderer.resumePresentation();
     }
+}
+
+function downloadCapture() {
+    if (!captureUrl.value) return;
+    const link = document.createElement("a");
+    link.href = captureUrl.value;
+    link.download = captureFilename.value;
+    link.hidden = true;
+    document.body.append(link);
+    link.click();
+    link.remove();
+}
+
+function continueJourney() {
+    if (capturePhase.value !== "review") return;
+    const viewportWidth = Math.max(1, window.innerWidth);
+    const viewportHeight = Math.max(1, window.innerHeight);
+    const geometry = captureGeometry.value;
+    capturePhase.value = "handoff";
+    renderer?.beginCaptureTransition(
+        {
+            rect: [
+                geometry.left / viewportWidth,
+                geometry.top / viewportHeight,
+                geometry.width / viewportWidth,
+                geometry.height / viewportHeight,
+            ],
+            frame: [
+                geometry.padding / viewportWidth,
+                geometry.padding / viewportHeight,
+                geometry.footer / viewportHeight,
+                (-0.32 * Math.PI) / 180,
+            ],
+            duration: 0.5,
+        },
+        {
+            onStarted: () => {
+                if (capturePhase.value === "handoff")
+                    capturePhase.value = "gpu-closing";
+            },
+            onComplete: finishCaptureTransition,
+        },
+    );
+    renderer?.resumePresentation();
+}
+
+function finishCaptureTransition() {
+    if (!captureActive.value) return;
+    clearCapture();
+    nextTick(() => captureButton.value?.focus({ preventScroll: true }));
 }
 
 async function showRendererError(error) {
@@ -286,6 +421,13 @@ async function copyMoodState() {
 }
 
 function onKeydown(event) {
+    if (captureActive.value) {
+        if (event.key === "Escape" && capturePhase.value === "review") {
+            event.preventDefault();
+            continueJourney();
+        }
+        return;
+    }
     if (
         event.target instanceof Element &&
         event.target.closest(
@@ -398,6 +540,7 @@ onMounted(async () => {
         }, 300);
 
         window.addEventListener("keydown", onKeydown);
+        window.addEventListener("resize", updateCaptureGeometry);
     } catch (error) {
         console.error(error);
         await showRendererError(error);
@@ -407,6 +550,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
     window.clearInterval(statsTimer);
     window.removeEventListener("keydown", onKeydown);
+    window.removeEventListener("resize", updateCaptureGeometry);
+    if (captureUrl.value) URL.revokeObjectURL(captureUrl.value);
     renderer?.destroy();
     destroyFallback?.();
 });
@@ -569,8 +714,13 @@ onBeforeUnmount(() => {
                                 <button type="button" @click="resetJourney">
                                     RESET JOURNEY
                                 </button>
-                                <button type="button" @click="captureStill">
-                                    CAPTURE PNG
+                                <button
+                                    ref="captureButton"
+                                    type="button"
+                                    :disabled="captureActive"
+                                    @click="captureStill"
+                                >
+                                    {{ capturePhase === "capturing" ? "CAPTURING" : "CAPTURE PNG" }}
                                 </button>
                             </div>
                         </section>
@@ -1039,6 +1189,41 @@ onBeforeUnmount(() => {
                 </Transition>
             </section>
         </template>
+
+        <section
+            v-if="captureUrl"
+            class="capture-review"
+            :class="{
+                'is-review': capturePhase === 'review' || capturePhase === 'handoff',
+                'is-gpu-closing': capturePhase === 'gpu-closing',
+            }"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Journey photograph"
+        >
+            <figure class="capture-print" :style="captureStyle">
+                <div class="capture-image">
+                    <img :src="captureUrl" alt="Captured Journey scene" />
+                </div>
+                <figcaption>
+                    <span class="capture-mark" aria-hidden="true">
+                        JOURNEY // STILL
+                    </span>
+                    <div class="capture-actions">
+                        <button
+                            ref="captureDownloadButton"
+                            type="button"
+                            @click="downloadCapture"
+                        >
+                            DOWNLOAD
+                        </button>
+                        <button type="button" @click="continueJourney">
+                            CONTINUE JOURNEY
+                        </button>
+                    </div>
+                </figcaption>
+            </figure>
+        </section>
 
         <div
             v-if="state === 'error' || fallbackPreview"
