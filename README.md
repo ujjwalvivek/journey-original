@@ -40,7 +40,7 @@ A WebGPU and WGSL diorama built around movement, atmosphere, and directed change
 - Temporal feedback amount.
 - Vignette strength.
 - Reset journey / feedback history.
-- PNG capture.
+- Paused Polaroid-style capture review with a clean PNG download and seamless return to the journey.
 - Collapsible side-panel HUD with keyboard shortcuts and hover recovery when hidden.
 - A deliberately reduced Canvas 2D platform notice when WebGPU is unavailable.
 
