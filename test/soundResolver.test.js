@@ -1,0 +1,66 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+    normalizeSoundWorldState,
+    resolveSoundState,
+} from "../src/audio/soundResolver.js";
+
+test("sound world state clamps renderer values", () => {
+    const world = normalizeSoundWorldState({
+        travelRunning: true,
+        travelSpeed: 8,
+        weather: {
+            precipitation: 4,
+            windSpeed: -2,
+            windDirection: -4,
+            mistDensity: 2,
+            visibility: -1,
+        },
+    });
+    assert.equal(world.travelSpeed, 2.5);
+    assert.equal(world.precipitation, 1);
+    assert.equal(world.windSpeed, 0);
+    assert.equal(world.windDirection, -1);
+    assert.equal(world.mistDensity, 1);
+    assert.equal(world.visibility, 0);
+});
+
+test("stopping travel silences rail energy without freezing environment", () => {
+    const sound = resolveSoundState({
+        travelRunning: false,
+        travelSpeed: 1.8,
+        weather: { precipitation: 0.8, windSpeed: 1.5 },
+    });
+    assert.equal(sound.layers.rail, 0);
+    assert.equal(sound.layers["rain-distant"] > 0, true);
+    assert.equal(sound.layers["wind-soft"] > 0, true);
+    assert.equal(sound.buses.environment, 1);
+    assert.equal(sound.buses.train, 1);
+});
+
+test("capture presentation softens journey buses but keeps atmosphere", () => {
+    const sound = resolveSoundState(
+        { travelRunning: true, travelSpeed: 1 },
+        { presentationPaused: true },
+    );
+    assert.equal(sound.buses.environment, 0.66);
+    assert.equal(sound.buses.train, 0.12);
+    assert.equal(sound.buses.music, 0.42);
+    assert.equal(sound.buses.voice, 0);
+});
+
+test("rail energy follows physical coasting rather than the transport boolean", () => {
+    const moving = resolveSoundState({
+        travelRunning: false,
+        travelSpeed: 1,
+        motionLevel: 0.7,
+    });
+    const nearlyStopped = resolveSoundState({
+        travelRunning: false,
+        travelSpeed: 1,
+        motionLevel: 0.1,
+    });
+    assert.ok(moving.layers.rail > nearlyStopped.layers.rail);
+    assert.ok(nearlyStopped.layers.rail > 0);
+});
