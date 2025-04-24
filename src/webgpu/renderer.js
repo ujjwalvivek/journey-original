@@ -534,7 +534,7 @@ export class JourneyRenderer {
     }
 
     resetJourney() {
-        this.clock.reset();
+        this.clock.reset({ travelRunning: this.travelRunning });
         this.weatherClock.reset();
         const cue = this.cueTimeline.reset();
         if (this.cueTimeline.enabled) this.setMood(cue.moodId);
@@ -548,12 +548,15 @@ export class JourneyRenderer {
             height: this.canvas.height,
             renderBudgetScale: this.renderBudgetScale,
             travelRunning: this.travelRunning,
+            travelSpeed: this.travelSpeed,
+            motionLevel: this.clock.motionLevel,
             travelTime: this.clock.travelTime,
             windTime: this.clock.windPhase,
             smokeLevel: this.clock.smokeLevel,
             weatherTime: this.weatherClock.weatherTime,
             precipitationTime: this.weatherClock.precipitationTime,
             gustTime: this.weatherClock.gustTime,
+            gust: this.weatherClock.gustValue,
             mistTime: this.weatherClock.mistTime,
             surfaceWetness: this.weatherClock.surfaceWetness,
             weatherFrozen: this.weatherFrozen,
@@ -673,7 +676,7 @@ export class JourneyRenderer {
             WEATHER_QUALITY_MODES.find(
                 ({ id }) => id === this.weatherQuality,
             )?.value ?? 2;
-        this.uniformData[99] = 0;
+        this.uniformData[99] = this.clock.smokeAge;
         this.uniformData[100] = mood.atmosphericDesaturation;
         this.uniformData[101] = mood.rainDepthDistribution;
         this.uniformData[102] = mood.rainContrast;

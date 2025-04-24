@@ -21,6 +21,7 @@ export function advanceSimulationClocks(
         travelTime: environmentClock.travelTime,
         windPhase: environmentClock.windPhase,
         foregroundPhase: environmentClock.foregroundPhase,
+        motionLevel: environmentClock.motionLevel,
         smokeLevel: environmentClock.smokeLevel,
         weatherTime: weatherClock.weatherTime,
         precipitationTime: weatherClock.precipitationTime,
