@@ -25,7 +25,7 @@ struct Uniforms {
   weatherPrecipitation: vec4f,
   weatherDynamics: vec4f,
   weatherTimes: vec4f,
-  weatherSurface: vec4f, // x light scatter, y drying rate, z rain quality
+  weatherSurface: vec4f, // x light scatter, y drying rate, z rain quality, w smoke age
   weatherDetail: vec4f, // x desaturation, y rain depth, z rain contrast, w foreground rain
   captureRect: vec4f, // normalized x, y, width, height
   captureFrame: vec4f, // normalized x padding, y padding, footer, rotation

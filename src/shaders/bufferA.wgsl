@@ -25,7 +25,7 @@ struct Uniforms {
   weatherPrecipitation: vec4f, // x amount, y density, z speed, w streak length
   weatherDynamics: vec4f, // x rain angle, y wind direction, z gustiness, w wetness
   weatherTimes: vec4f, // x weather, y precipitation, z gust, w mist
-  weatherSurface: vec4f, // x light scatter, y drying rate, z rain quality
+  weatherSurface: vec4f, // x light scatter, y drying rate, z rain quality, w smoke age
   weatherDetail: vec4f, // x desaturation, y rain depth, z rain contrast, w foreground rain
 };
 
@@ -630,13 +630,21 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   uv2.x += windDirection * smokeGust * 0.025;
   let smokeAmount = clamp(uniforms.motion.y, 0.0, 1.5);
   let smokeOpacity = smoothstep(0.0, 0.22, smokeAmount);
-  let h = fbm2(uv2, 8) - (0.65 - smokeAmount * 0.1);
+  let smokeNoise = fbm2(uv2, 8);
+  let h = smokeNoise - (0.65 - smokeAmount * 0.1);
 
   if (smokeUv.x < 0.49 && smokeAmount > 0.001) {
     let x = -smokeUv.x + 0.49;
+    let smokeAge = clamp(uniforms.weatherSurface.w, 0.0, 1.0);
+    let smokeGrowth = smokeAge * smokeAge * (3.0 - 2.0 * smokeAge);
+    // Noise breaks up the advancing edge so a new plume grows as connected
+    // puffs rather than appearing behind a straight clipping plane.
+    let smokeReach = mix(0.025, 1.35, smokeGrowth) +
+      (smokeNoise - 0.5) * mix(0.025, 0.11, smokeGrowth);
+    let smokeReveal = 1.0 - smoothstep(smokeReach - 0.055, smokeReach, x);
     let y = abs(smokeUv.y + h * 0.4 - 0.16 * sqrt(x) - 0.12) - 0.8 * x * exp(-x * 10.0);
-    if (y < 0.0) { col = mix(col, uniforms.smokeLight.rgb, smokeOpacity); }
-    if (y < -0.02) { col = mix(col, uniforms.smokeShadow.rgb, smokeOpacity); }
+    if (y < 0.0) { col = mix(col, uniforms.smokeLight.rgb, smokeOpacity * smokeReveal); }
+    if (y < -0.02) { col = mix(col, uniforms.smokeShadow.rgb, smokeOpacity * smokeReveal); }
   }
 
   // The cone is atmospheric light and belongs inside the scene. The round
