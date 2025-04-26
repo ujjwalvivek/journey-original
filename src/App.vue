@@ -16,6 +16,8 @@ import {
     WEATHER_QUALITY_MODES,
 } from "./weather/weatherEngine.js";
 import { WEATHER_FRONTS } from "./weather/weatherFront.js";
+import { SoundEngine } from "./audio/soundEngine.js";
+import { AUDIO_ASSETS } from "./audio/audioManifest.js";
 
 const MOOD_ONLY_CONTROLS = AUTHORING_CONTROLS.filter(
     ({ key }) => !LEGACY_WEATHER_KEYS.includes(key),
@@ -31,6 +33,7 @@ const railCanReveal = ref(true);
 const activePanel = ref(null);
 const travelRunning = ref(true);
 const travelSpeed = ref(1);
+const motionLevel = ref(1);
 const moodId = ref("departure");
 const sceneMenuOpen = ref(false);
 const weatherId = ref("scene");
@@ -73,17 +76,26 @@ const captureGeometry = ref({
 });
 const captureButton = ref(null);
 const captureDownloadButton = ref(null);
+const soundState = ref("locked");
+const soundMuted = ref(false);
+const soundVolume = ref(0.8);
+const soundError = ref("");
+const soundSourceCount = AUDIO_ASSETS.length;
 
 let renderer = null;
+let soundEngine = null;
 let statsTimer = 0;
+let soundTimer = 0;
 let destroyFallback = null;
 
 const travelLabel = computed(() =>
     travelRunning.value ? "STOP TRAIN" : "START TRAIN",
 );
-const statusLabel = computed(() =>
-    travelRunning.value ? "IN MOTION" : "HOLDING",
-);
+const statusLabel = computed(() => {
+    if (travelRunning.value)
+        return motionLevel.value < 0.94 ? "ACCELERATING" : "IN MOTION";
+    return motionLevel.value > 0.04 ? "COASTING" : "HOLDING";
+});
 const selectedMoodName = computed(
     () => MOODS.find((mood) => mood.id === moodId.value)?.name ?? "-",
 );
@@ -103,6 +115,20 @@ const selectedWeatherFrontName = computed(
         "-",
 );
 const captureActive = computed(() => capturePhase.value !== "idle");
+const soundStatusLabel = computed(() => {
+    if (soundState.value === "starting") return "STARTING";
+    if (soundState.value === "error") return "UNAVAILABLE";
+    if (soundState.value === "suspended") return "SUSPENDED";
+    if (soundState.value === "ready")
+        return soundMuted.value ? "MUTED" : "READY";
+    return "OFFLINE";
+});
+const soundActionLabel = computed(() => {
+    if (soundState.value === "starting") return "STARTING SOUND";
+    if (soundState.value === "error") return "SOUND UNAVAILABLE";
+    if (soundState.value === "locked") return "ENABLE SOUND";
+    return soundMuted.value ? "RESTORE SOUND" : "MUTE SOUND";
+});
 const captureStyle = computed(() => ({
     "--capture-left": `${captureGeometry.value.left}px`,
     "--capture-top": `${captureGeometry.value.top}px`,
@@ -119,6 +145,34 @@ function toggleTravel() {
 
 function resetJourney() {
     renderer?.resetJourney();
+}
+
+async function toggleSound() {
+    if (!soundEngine || soundState.value === "starting") return;
+    if (soundState.value === "error") return;
+    if (soundState.value === "locked" || soundState.value === "suspended") {
+        soundState.value = "starting";
+        soundError.value = "";
+        try {
+            soundEngine.setMasterVolume(soundVolume.value);
+            await soundEngine.unlock();
+            soundMuted.value = false;
+            soundEngine.setMuted(false);
+        } catch (error) {
+            console.error(error);
+            soundError.value =
+                error instanceof Error ? error.message : String(error);
+            soundState.value = "error";
+        }
+        return;
+    }
+    soundMuted.value = soundEngine.setMuted(!soundMuted.value);
+}
+
+function onVisibilityChange() {
+    soundEngine?.setPageHidden(document.hidden).catch((error) => {
+        console.error("Could not change audio visibility state:", error);
+    });
 }
 
 function nextMood() {
@@ -228,6 +282,7 @@ async function captureStill() {
     if (!renderer || captureActive.value || state.value !== "ready") return;
     capturePhase.value = "capturing";
     renderer.pausePresentation();
+    soundEngine?.setPresentationPaused(true);
     let pendingUrl = "";
     try {
         const blob = await renderer.capturePng();
@@ -261,6 +316,7 @@ async function captureStill() {
         if (pendingUrl) URL.revokeObjectURL(pendingUrl);
         clearCapture();
         renderer.resumePresentation();
+        soundEngine?.setPresentationPaused(false);
     }
 }
 
@@ -306,6 +362,7 @@ function continueJourney() {
         },
     );
     renderer?.resumePresentation();
+    soundEngine?.setPresentationPaused(false);
 }
 
 function finishCaptureTransition() {
@@ -317,6 +374,7 @@ function finishCaptureTransition() {
 async function showRendererError(error) {
     state.value = "error";
     message.value = error instanceof Error ? error.message : String(error);
+    soundEngine?.suspend().catch((audioError) => console.error(audioError));
     await nextTick();
     destroyFallback?.();
     destroyFallback = mountCanvasFallback(fallbackCanvas.value);
@@ -471,9 +529,33 @@ watch(weatherQuality, (value) => renderer?.setWeatherQuality(value));
 watch(autoMood, (value) => renderer?.setAutoMood(value));
 watch(feedbackAmount, (value) => renderer?.setFeedbackAmount(value));
 watch(vignetteStrength, (value) => renderer?.setVignetteStrength(value));
+watch(soundVolume, (value) => {
+    soundEngine?.setMasterVolume(value);
+    try {
+        window.localStorage.setItem("journey.soundVolume", String(value));
+    } catch {
+        // Volume persistence is optional when storage is restricted.
+    }
+});
 
 onMounted(async () => {
     try {
+        try {
+            const savedVolume = Number(
+                window.localStorage.getItem("journey.soundVolume"),
+            );
+            if (Number.isFinite(savedVolume))
+                soundVolume.value = Math.max(0, Math.min(1, savedVolume));
+        } catch {
+            // Storage can be unavailable in privacy-restricted contexts.
+        }
+        soundEngine = new SoundEngine({
+            onStateChange(nextState) {
+                soundState.value = nextState;
+            },
+        });
+        soundEngine.setMasterVolume(soundVolume.value);
+
         if (!navigator.gpu) {
             await showRendererError(
                 "WebGPU is unavailable in this browser or has been disabled.",
@@ -509,6 +591,7 @@ onMounted(async () => {
             renderSize.value = `${stats.width}×${stats.height}`;
             renderScale.value = stats.renderBudgetScale;
             travelTime.value = stats.travelTime;
+            motionLevel.value = stats.motionLevel;
             weatherTime.value = stats.weatherTime;
             surfaceWetness.value = stats.surfaceWetness;
             weatherFrozen.value = stats.weatherFrozen;
@@ -539,8 +622,14 @@ onMounted(async () => {
                 weatherId.value = stats.weatherId;
         }, 300);
 
+        soundTimer = window.setInterval(() => {
+            const stats = renderer?.getStats();
+            if (stats) soundEngine?.updateWorldState(stats);
+        }, 50);
+
         window.addEventListener("keydown", onKeydown);
         window.addEventListener("resize", updateCaptureGeometry);
+        document.addEventListener("visibilitychange", onVisibilityChange);
     } catch (error) {
         console.error(error);
         await showRendererError(error);
@@ -549,10 +638,13 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
     window.clearInterval(statsTimer);
+    window.clearInterval(soundTimer);
     window.removeEventListener("keydown", onKeydown);
     window.removeEventListener("resize", updateCaptureGeometry);
+    document.removeEventListener("visibilitychange", onVisibilityChange);
     if (captureUrl.value) URL.revokeObjectURL(captureUrl.value);
     renderer?.destroy();
+    soundEngine?.destroy().catch((error) => console.error(error));
     destroyFallback?.();
 });
 </script>
@@ -578,7 +670,10 @@ onBeforeUnmount(() => {
                     <div class="rail-telemetry" aria-label="Renderer telemetry">
                         <span
                             class="rail-metric motion-status"
-                            :class="{ holding: !travelRunning }"
+                            :class="{
+                                holding:
+                                    !travelRunning && motionLevel <= 0.04,
+                            }"
                         >
                             <i></i><em>{{ statusLabel }}</em>
                         </span>
@@ -666,7 +761,10 @@ onBeforeUnmount(() => {
                             </div>
                             <div
                                 class="journey-status"
-                                :class="{ holding: !travelRunning }"
+                                :class="{
+                                    holding:
+                                        !travelRunning && motionLevel <= 0.04,
+                                }"
                             >
                                 <i></i>
                                 <span>
@@ -686,8 +784,12 @@ onBeforeUnmount(() => {
                                 <span>
                                     <small>{{
                                         travelRunning
-                                            ? "TRAIN LIVE"
-                                            : "TRAIN HOLD"
+                                            ? motionLevel < 0.94
+                                                ? "TRAIN BUILDING"
+                                                : "TRAIN LIVE"
+                                            : motionLevel > 0.04
+                                              ? "TRAIN COAST"
+                                              : "TRAIN HOLD"
                                     }}</small>
                                     <strong>{{ travelLabel }}</strong>
                                 </span>
@@ -710,6 +812,63 @@ onBeforeUnmount(() => {
                                     }"
                                 />
                             </label>
+                            <div
+                                class="sound-system"
+                                :class="{
+                                    active:
+                                        soundState === 'ready' && !soundMuted,
+                                    muted: soundMuted,
+                                    failed: soundState === 'error',
+                                }"
+                            >
+                                <div class="sound-system-heading">
+                                    <span>SOUND ENGINE</span>
+                                    <strong>{{ soundStatusLabel }}</strong>
+                                </div>
+                                <button
+                                    class="sound-toggle"
+                                    type="button"
+                                    :disabled="
+                                        soundState === 'starting' ||
+                                        soundState === 'error'
+                                    "
+                                    :aria-pressed="
+                                        soundState === 'ready' && !soundMuted
+                                    "
+                                    @click="toggleSound"
+                                >
+                                    <i aria-hidden="true"><b></b><b></b><b></b></i>
+                                    <span>
+                                        <small
+                                            >{{ soundSourceCount }} SOURCES
+                                            REGISTERED</small
+                                        >
+                                        <strong>{{ soundActionLabel }}</strong>
+                                    </span>
+                                </button>
+                                <label class="range-row sound-volume">
+                                    <span
+                                        >Master volume
+                                        <output
+                                            >{{ Math.round(soundVolume * 100) }}%</output
+                                        ></span
+                                    >
+                                    <input
+                                        v-model.number="soundVolume"
+                                        type="range"
+                                        min="0"
+                                        max="1"
+                                        step="0.01"
+                                        :disabled="soundState === 'error'"
+                                        :style="{
+                                            '--range-progress': `${soundVolume * 100}%`,
+                                        }"
+                                    />
+                                </label>
+                                <small v-if="soundError" class="sound-error">
+                                    {{ soundError }}
+                                </small>
+                            </div>
                             <div class="button-row">
                                 <button type="button" @click="resetJourney">
                                     RESET JOURNEY

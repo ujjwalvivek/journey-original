@@ -457,6 +457,137 @@ canvas {
     font-variant-numeric: tabular-nums;
 }
 
+.sound-system {
+    margin-top: 17px;
+    padding-top: 13px;
+    border-top: 1px solid rgba(255, 226, 208, 0.12);
+}
+
+.sound-system-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 7px;
+    color: rgba(255, 220, 197, 0.5);
+    font-size: 8px;
+    letter-spacing: 0.1em;
+}
+
+.sound-system-heading strong {
+    color: rgba(255, 231, 216, 0.68);
+    font-size: 8px;
+    font-weight: 500;
+}
+
+.sound-system.active .sound-system-heading strong {
+    color: var(--accent);
+    text-shadow: 0 0 10px rgba(255, 121, 75, 0.36);
+}
+
+.sound-toggle {
+    width: 100%;
+    min-height: 47px;
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 7px 11px;
+    border: 1px solid rgba(255, 228, 210, 0.18);
+    color: rgba(255, 239, 228, 0.84);
+    background: rgba(255, 255, 255, 0.025);
+    cursor: pointer;
+    text-align: left;
+}
+
+.sound-toggle:hover,
+.sound-system.active .sound-toggle {
+    border-color: rgba(255, 143, 96, 0.48);
+    background: linear-gradient(
+        90deg,
+        rgba(118, 43, 24, 0.34),
+        rgba(48, 22, 17, 0.2)
+    );
+}
+
+.sound-toggle:disabled {
+    cursor: not-allowed;
+    opacity: 0.48;
+}
+
+.sound-toggle > i {
+    width: 25px;
+    height: 25px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    flex: 0 0 auto;
+    border: 1px solid rgba(255, 201, 174, 0.3);
+    font-style: normal;
+}
+
+.sound-toggle > i b {
+    width: 2px;
+    height: 5px;
+    background: rgba(255, 218, 195, 0.48);
+}
+
+.sound-toggle > i b:nth-child(2) {
+    height: 11px;
+}
+
+.sound-system.active .sound-toggle > i b {
+    background: var(--accent);
+    box-shadow: 0 0 7px rgba(255, 123, 76, 0.6);
+    animation: sound-meter 850ms ease-in-out infinite alternate;
+}
+
+.sound-system.active .sound-toggle > i b:nth-child(2) {
+    animation-delay: -420ms;
+}
+
+.sound-system.active .sound-toggle > i b:nth-child(3) {
+    animation-delay: -180ms;
+}
+
+.sound-toggle small,
+.sound-toggle strong {
+    display: block;
+}
+
+.sound-toggle small {
+    margin-bottom: 3px;
+    color: rgba(255, 210, 183, 0.5);
+    font-size: 7px;
+    letter-spacing: 0.1em;
+}
+
+.sound-toggle strong {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+}
+
+.sound-volume {
+    margin-top: 10px;
+}
+
+.sound-error {
+    display: block;
+    margin-top: 8px;
+    color: #ff9c7a;
+    font-size: 8px;
+    line-height: 1.5;
+}
+
+@keyframes sound-meter {
+    from {
+        transform: scaleY(0.45);
+    }
+    to {
+        transform: scaleY(1);
+    }
+}
+
 input[type="range"] {
     --range-progress: 50%;
     width: 100%;
