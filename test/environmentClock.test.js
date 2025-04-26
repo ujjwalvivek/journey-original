@@ -36,11 +36,13 @@ test("reset returns every phase to the baseline", () => {
         windPhase: clock.windPhase,
         foregroundPhase: clock.foregroundPhase,
         smokeLevel: clock.smokeLevel,
+        smokeAge: clock.smokeAge,
     }, {
         travelTime: 0,
         windPhase: 0,
         foregroundPhase: 0,
         smokeLevel: 0,
+        smokeAge: 0,
     });
 });
 
@@ -57,13 +59,61 @@ test("smoke ramps up and down instead of switching abruptly", () => {
     assert.equal(clock.smokeLevel, 0);
 });
 
+test("smoke throttle follows acceleration when restarting from a hold", () => {
+    const clock = new EnvironmentClock();
+    clock.advance(0.1, { travelRunning: false });
+    assert.equal(clock.motionLevel, 0);
+    assert.equal(clock.smokeLevel, 0);
+
+    clock.advance(0.1, { travelRunning: true });
+    assert.ok(clock.motionLevel > 0);
+    assert.ok(clock.smokeLevel > 0);
+    assert.ok(clock.smokeLevel < 0.04);
+    assert.ok(clock.smokeLevel < clock.motionLevel);
+    assert.ok(Math.abs(clock.smokeAge - 0.05) < 1e-12);
+});
+
+test("a stopped plume keeps its age until it has faded, then restarts fresh", () => {
+    const clock = new EnvironmentClock();
+    clock.advance(0.1, { travelRunning: true });
+    const ageBeforeStop = clock.smokeAge;
+
+    clock.advance(0.1, { travelRunning: false });
+    assert.equal(clock.smokeAge, ageBeforeStop);
+
+    clock.advance(0.1, { travelRunning: false });
+    assert.equal(clock.smokeLevel, 0);
+    assert.equal(clock.smokeAge, 0);
+
+    clock.advance(0.1, { travelRunning: true });
+    assert.ok(Math.abs(clock.smokeAge - 0.05) < 1e-12);
+});
+
 test("foreground clouds combine journey parallax with continuous wind motion", () => {
     const clock = new EnvironmentClock();
     clock.advance(0.1, { travelRunning: true, travelSpeed: 2, windSpeed: 3 });
     assert.ok(Math.abs(clock.foregroundPhase - 0.818) < 1e-12);
 
     clock.advance(0.1, { travelRunning: false, travelSpeed: 2, windSpeed: 3 });
-    assert.ok(Math.abs(clock.foregroundPhase - 0.836) < 1e-12);
+    assert.ok(clock.foregroundPhase > 0.836);
+    assert.ok(clock.foregroundPhase < 1.618);
+});
+
+test("transport changes accelerate and coast instead of switching velocity", () => {
+    const clock = new EnvironmentClock();
+    clock.advance(0.1, { travelRunning: true, travelSpeed: 1 });
+    const beforeStop = clock.travelTime;
+
+    clock.advance(0.1, { travelRunning: false, travelSpeed: 1 });
+    assert.ok(clock.motionLevel > 0 && clock.motionLevel < 1);
+    assert.ok(clock.travelTime > beforeStop);
+
+    for (let frame = 0; frame < 60; frame += 1)
+        clock.advance(0.1, { travelRunning: false, travelSpeed: 1 });
+    assert.equal(clock.motionLevel, 0);
+
+    clock.advance(0.1, { travelRunning: true, travelSpeed: 1 });
+    assert.ok(clock.motionLevel > 0 && clock.motionLevel < 1);
 });
 
 test("wind direction changes future displacement without scrubbing", () => {

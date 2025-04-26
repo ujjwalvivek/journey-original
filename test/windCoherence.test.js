@@ -57,7 +57,8 @@ test("stopped-train smoke fades while rain, mist, and gusts continue", () => {
             weather: storm,
         });
 
-    assert.equal(environmentClock.travelTime, 0.1);
+    assert.ok(environmentClock.travelTime > 0.1);
+    assert.ok(environmentClock.travelTime < 0.4);
     assert.ok(environmentClock.smokeLevel < smokeBeforeStop);
     assert.ok(weatherClock.weatherTime > weatherBeforeStop);
     assert.ok(weatherClock.precipitationTime > 0.15);
