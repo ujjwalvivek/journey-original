@@ -6,3 +6,4 @@ reference/
 .env.local
 tools/wgsl-validator/target/
 *.lock
+media/audio/
