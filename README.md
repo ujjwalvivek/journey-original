@@ -15,7 +15,7 @@ A WebGPU and WGSL diorama built around movement, atmosphere, and directed change
 
 ## Current systems
 
-- Start or stop the train without stopping the world: journey distance pauses, smoke fades naturally, and rain, mist, wind, gusts, and cloud evolution keep moving on independent clocks.
+- Start or stop the train without stopping the world: journey motion accelerates and coasts instead of switching velocity, smoke fades naturally, and rain, mist, wind, gusts, and cloud evolution keep moving on independent clocks.
 - Travel speed from 0.10× to 2.50×.
 - Authored scenes: Departure, Ember, Blue Hour, Sakura, Monsoon, and Night Rail, each with an explicit default physical-weather state.
 - Independent weather presets: Clear, Haze, Overcast, Drizzle, Monsoon, and Clearing, plus the weather attached to the selected scene.
@@ -37,10 +37,10 @@ A WebGPU and WGSL diorama built around movement, atmosphere, and directed change
 
 - Mood intensity across world structure and explicit scene palettes for sky, clouds, smoke, train materials, bridge, fog, and practical lights.
 - An Engine Lab with separate Scene and Weather direction, grouped live controls, palette editing, weather freezing, front-stage control, weather reset, quality selection, and JSON snapshot export.
-- Temporal feedback amount.
-- Vignette strength.
-- Reset journey / feedback history.
+- Temporal feedback amount and Vignette strength.
+- Reset journey and feedback history.
 - Paused Polaroid-style capture review with a clean PNG download and seamless return to the journey.
+- An opt-in Web Audio engine with independent Environment, Train, Music, and Voice buses, reactive recorded train, wind, and layered-rain sources, departure/halt cues, smooth gain and playback-rate automation, on-demand weather loading, and browser/capture lifecycle handling.
 - Collapsible side-panel HUD with keyboard shortcuts and hover recovery when hidden.
 - A deliberately reduced Canvas 2D platform notice when WebGPU is unavailable.
 
