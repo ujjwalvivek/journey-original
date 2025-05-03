@@ -7,6 +7,9 @@ export const AUDIO_BUS_IDS = Object.freeze([
 
 export const AUDIO_LAYER_ROLES = Object.freeze([
     "ambience",
+    "ambience-birds",
+    "ambience-melodic",
+    "ambience-ominous",
     "wind-soft",
     "wind-hard",
     "rain-distant",
@@ -16,6 +19,7 @@ export const AUDIO_LAYER_ROLES = Object.freeze([
     "engine",
     "rail",
     "train-transition",
+    "weather-transition",
     "music",
     "voice",
 ]);
@@ -23,6 +27,42 @@ export const AUDIO_LAYER_ROLES = Object.freeze([
 const opus = (src) => Object.freeze({ src, type: "audio/ogg; codecs=opus" });
 
 export const AUDIO_ASSETS = Object.freeze([
+    Object.freeze({
+        id: "ambience-birds",
+        bus: "environment",
+        role: "ambience-birds",
+        sources: Object.freeze([
+            opus("/audio/ambience/birds-nature-ambience.opus"),
+        ]),
+        loop: true,
+        gain: 0.28,
+        fade: 2.4,
+        reactive: true,
+    }),
+    Object.freeze({
+        id: "ambience-melodic",
+        bus: "environment",
+        role: "ambience-melodic",
+        sources: Object.freeze([
+            opus("/audio/ambience/melodious-ambience.opus"),
+        ]),
+        loop: true,
+        gain: 0.42,
+        fade: 2.8,
+        reactive: true,
+    }),
+    Object.freeze({
+        id: "ambience-ominous",
+        bus: "environment",
+        role: "ambience-ominous",
+        sources: Object.freeze([
+            opus("/audio/ambience/valley-ominous-sound-loop.opus"),
+        ]),
+        loop: true,
+        gain: 0.4,
+        fade: 3.2,
+        reactive: true,
+    }),
     Object.freeze({
         id: "train-idle",
         bus: "train",
@@ -51,8 +91,9 @@ export const AUDIO_ASSETS = Object.freeze([
             opus("/audio/train/train-departure-one-shot.opus"),
         ]),
         loop: false,
-        gain: 0.46,
+        gain: 0.65,
         trigger: "train-start",
+        triggerGroup: "transport",
         preload: true,
     }),
     Object.freeze({
@@ -63,8 +104,9 @@ export const AUDIO_ASSETS = Object.freeze([
             opus("/audio/train/train-halt-one-shot.opus"),
         ]),
         loop: false,
-        gain: 0.5,
+        gain: 0.68,
         trigger: "train-stop",
+        triggerGroup: "transport",
         preload: true,
     }),
     Object.freeze({
@@ -133,6 +175,23 @@ export const AUDIO_ASSETS = Object.freeze([
         gain: 0.22,
         reactive: true,
     }),
+    Object.freeze({
+        id: "rain-front-arrival",
+        bus: "environment",
+        role: "weather-transition",
+        sources: Object.freeze([
+            opus("/audio/weather/night-heavy-rain-transition-one-shot.opus"),
+        ]),
+        loop: false,
+        gain: 0.75,
+        durationHint: 27.9665,
+        fadeIn: 0.45,
+        fadeOut: 5,
+        duckAmbience: 0.32,
+        trigger: "weather-monsoon",
+        triggerGroup: "weather",
+        preload: true,
+    }),
 ]);
 
 const toFinite = (value, fallback) => {
@@ -189,10 +248,21 @@ export function normalizeAudioManifest(entries = AUDIO_ASSETS) {
             loopStart,
             loopEnd,
             gain: Math.max(0, Math.min(2, toFinite(entry.gain, 1))),
+            fade: Math.max(0.02, Math.min(10, toFinite(entry.fade, 0.35))),
+            durationHint: Math.max(0, toFinite(entry.durationHint, 0)),
+            fadeIn: Math.max(0, Math.min(10, toFinite(entry.fadeIn, 0))),
+            fadeOut: Math.max(0, Math.min(15, toFinite(entry.fadeOut, 0))),
+            duckAmbience: Math.max(
+                0,
+                Math.min(1, toFinite(entry.duckAmbience, 1)),
+            ),
             autoplay: Boolean(entry.autoplay),
             reactive: Boolean(entry.reactive),
             preload: Boolean(entry.preload),
             trigger: entry.trigger ? String(entry.trigger) : "",
+            triggerGroup: entry.triggerGroup
+                ? String(entry.triggerGroup)
+                : "default",
         });
     });
 }

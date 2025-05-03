@@ -11,11 +11,30 @@ const smoothstep = (minimum, maximum, value) => {
     return amount * amount * (3 - 2 * amount);
 };
 
+const SCENE_AMBIENCE = Object.freeze({
+    departure: Object.freeze({ birds: 0.22, melodic: 0.62, ominous: 0.02 }),
+    ember: Object.freeze({ birds: 0.04, melodic: 0.38, ominous: 0.2 }),
+    "blue-hour": Object.freeze({ birds: 0.08, melodic: 0.56, ominous: 0.18 }),
+    sakura: Object.freeze({ birds: 0.82, melodic: 0.38, ominous: 0 }),
+    monsoon: Object.freeze({ birds: 0, melodic: 0.08, ominous: 0.78 }),
+    "night-rail": Object.freeze({ birds: 0, melodic: 0.16, ominous: 0.72 }),
+});
+
+function sceneAmbience(sceneId) {
+    return SCENE_AMBIENCE[sceneId] ?? SCENE_AMBIENCE.departure;
+}
+
 export function normalizeSoundWorldState(snapshot = {}) {
     const weather = snapshot.weather ?? {};
+    const selectedWeatherId = String(snapshot.weatherId || weather.id || "scene");
+    const effectiveWeatherId =
+        selectedWeatherId === "scene"
+            ? String(snapshot.authoredWeatherId || "clear")
+            : selectedWeatherId;
     return Object.freeze({
         sceneId: String(snapshot.moodId || snapshot.sceneId || "departure"),
         cueId: String(snapshot.cueId || "departure"),
+        weatherId: effectiveWeatherId,
         travelRunning: snapshot.travelRunning !== false,
         travelSpeed: clamp(snapshot.travelSpeed || 1, 0.1, 2.5),
         motionLevel: clamp(
@@ -41,6 +60,9 @@ export function resolveSoundState(snapshot = {}, { presentationPaused = false } 
     const obscurity = clamp(
         world.mistDensity * 0.55 + (1 - world.visibility) * 0.45,
     );
+    const scene = sceneAmbience(world.sceneId);
+    const dryAir = 1 - rainEnergy;
+    const windPan = clamp(world.windDirection * windEnergy * 0.34, -0.34, 0.34);
 
     const buses = {
         environment: presentationPaused ? 0.66 : 1,
@@ -54,6 +76,15 @@ export function resolveSoundState(snapshot = {}, { presentationPaused = false } 
         buses: Object.freeze(buses),
         layers: Object.freeze({
             ambience: 1,
+            "ambience-birds": clamp(
+                scene.birds * dryAir * (0.72 + world.visibility * 0.28),
+            ),
+            "ambience-melodic": clamp(
+                scene.melodic * (1 - rainEnergy * 0.58),
+            ),
+            "ambience-ominous": clamp(
+                scene.ominous + rainEnergy * 0.42 + obscurity * 0.18,
+            ),
             "wind-soft": clamp(
                 windEnergy *
                     (1 - smoothstep(0.45, 1, windEnergy) * 0.58) *
@@ -72,6 +103,7 @@ export function resolveSoundState(snapshot = {}, { presentationPaused = false } 
             engine: 0.55 + speedEnergy * 0.45,
             rail: speedEnergy,
             "train-transition": 1,
+            "weather-transition": 1,
             music: 1,
             voice: 1,
         }),
@@ -81,6 +113,15 @@ export function resolveSoundState(snapshot = {}, { presentationPaused = false } 
         }),
         filters: Object.freeze({
             distantCutoff: 18000 - obscurity * 12000,
+        }),
+        pans: Object.freeze({
+            "ambience-birds": windPan * 0.28,
+            "ambience-melodic": 0,
+            "ambience-ominous": windPan * 0.12,
+            "wind-soft": windPan,
+            "wind-hard": windPan,
+            "rain-distant": windPan * 0.22,
+            "rain-heavy": windPan * 0.12,
         }),
     });
 }
