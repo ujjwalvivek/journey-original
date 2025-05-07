@@ -10,7 +10,10 @@ import {
     AudioAssetLoader,
     selectPlayableSource,
 } from "../src/audio/audioLoader.js";
-import { SoundEngine } from "../src/audio/soundEngine.js";
+import {
+    resolveCueAmbienceGain,
+    SoundEngine,
+} from "../src/audio/soundEngine.js";
 
 class FakeParam {
     constructor(value = 1) {
@@ -64,6 +67,22 @@ class FakeCompressor extends FakeNode {
     }
 }
 
+class FakeBiquadFilter extends FakeNode {
+    constructor() {
+        super();
+        this.type = "lowpass";
+        this.frequency = new FakeParam(18000);
+        this.Q = new FakeParam(1);
+    }
+}
+
+class FakeStereoPanner extends FakeNode {
+    constructor() {
+        super();
+        this.pan = new FakeParam(0);
+    }
+}
+
 class FakeSource extends FakeNode {
     constructor() {
         super();
@@ -97,6 +116,14 @@ class FakeAudioContext {
 
     createDynamicsCompressor() {
         return new FakeCompressor();
+    }
+
+    createBiquadFilter() {
+        return new FakeBiquadFilter();
+    }
+
+    createStereoPanner() {
+        return new FakeStereoPanner();
     }
 
     createBufferSource() {
@@ -144,9 +171,24 @@ test("manifest validation rejects duplicate ids and invalid loop ranges", () => 
     );
 });
 
+test("weather cue envelope crossfades back into ambience", () => {
+    const envelope = {
+        startedAt: 10,
+        duration: 28,
+        fadeIn: 1,
+        fadeOut: 5,
+        floor: 0.3,
+    };
+    assert.equal(resolveCueAmbienceGain(envelope, 10), 1);
+    assert.equal(resolveCueAmbienceGain(envelope, 11), 0.3);
+    assert.equal(resolveCueAmbienceGain(envelope, 33), 0.3);
+    assert.ok(resolveCueAmbienceGain(envelope, 35.5) > 0.3);
+    assert.equal(resolveCueAmbienceGain(envelope, 38), 1);
+});
+
 test("production audio manifest points to deployed source files", () => {
     const normalized = normalizeAudioManifest(AUDIO_ASSETS);
-    assert.equal(normalized.length, 10);
+    assert.equal(normalized.length, 14);
     for (const asset of normalized) {
         for (const source of asset.sources) {
             const file = new URL(`../public${source.src}`, import.meta.url);
@@ -245,11 +287,24 @@ test("reactive weather layers load on demand and train changes fire cues", async
     });
     engine.updateWorldState({
         travelRunning: true,
-        weather: { windSpeed: 1.8 },
+        weather: { windSpeed: 1.8, windDirection: 1 },
     });
     await engine.unlock();
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(engine.layers.has("wind-test"), true);
+    assert.ok(engine.layers.get("wind-test").panner.pan.value > 0);
+
+    engine.updateWorldState({
+        travelRunning: true,
+        weather: {
+            windSpeed: 1.8,
+            windDirection: -1,
+            mistDensity: 0.8,
+            visibility: 0.2,
+        },
+    });
+    assert.ok(engine.layers.get("wind-test").panner.pan.value < 0);
+    assert.ok(engine.buses.get("environment").filter.frequency.value < 10000);
 
     engine.updateWorldState({
         travelRunning: false,
@@ -258,6 +313,91 @@ test("reactive weather layers load on demand and train changes fire cues", async
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(
         [...engine.layers.keys()].some((id) => id.startsWith("stop-test#")),
+        true,
+    );
+    await engine.destroy();
+});
+
+test("weather arrival cues do not cancel transport cues", async () => {
+    const cueManifest = [
+        {
+            id: "start-test",
+            bus: "train",
+            role: "train-transition",
+            src: "/start.ogg",
+            loop: false,
+            trigger: "train-start",
+            triggerGroup: "transport",
+        },
+        {
+            id: "storm-test",
+            bus: "environment",
+            role: "weather-transition",
+            src: "/storm.ogg",
+            loop: false,
+            trigger: "weather-monsoon",
+            triggerGroup: "weather",
+        },
+    ];
+    const engine = new SoundEngine({
+        manifest: cueManifest,
+        AudioContextClass: FakeAudioContext,
+        fetchFn: async () => ({
+            ok: true,
+            arrayBuffer: async () => new ArrayBuffer(8),
+        }),
+    });
+    engine.updateWorldState({ travelRunning: false, weatherId: "clear" });
+    await engine.unlock();
+    engine.updateWorldState({ travelRunning: true, weatherId: "clear" });
+    await new Promise((resolve) => setImmediate(resolve));
+    const transportKey = [...engine.layers.keys()].find((id) =>
+        id.startsWith("start-test#"),
+    );
+    assert.ok(transportKey);
+
+    engine.updateWorldState({ travelRunning: true, weatherId: "monsoon" });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(engine.layers.has(transportKey), true);
+    assert.equal(
+        [...engine.layers.keys()].some((id) => id.startsWith("storm-test#")),
+        true,
+    );
+    await engine.destroy();
+});
+
+test("authored Monsoon scene fires the storm arrival cue", async () => {
+    const engine = new SoundEngine({
+        manifest: [
+            {
+                id: "storm-test",
+                bus: "environment",
+                role: "weather-transition",
+                src: "/storm.ogg",
+                loop: false,
+                trigger: "weather-monsoon",
+                triggerGroup: "weather",
+            },
+        ],
+        AudioContextClass: FakeAudioContext,
+        fetchFn: async () => ({
+            ok: true,
+            arrayBuffer: async () => new ArrayBuffer(8),
+        }),
+    });
+    engine.updateWorldState({
+        weatherId: "scene",
+        authoredWeatherId: "clear",
+    });
+    await engine.unlock();
+    engine.updateWorldState({
+        moodId: "monsoon",
+        weatherId: "scene",
+        authoredWeatherId: "monsoon",
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(
+        [...engine.layers.keys()].some((id) => id.startsWith("storm-test#")),
         true,
     );
     await engine.destroy();

@@ -26,6 +26,15 @@ test("sound world state clamps renderer values", () => {
     assert.equal(world.visibility, 0);
 });
 
+test("authored scene weather resolves to its physical weather id", () => {
+    const world = normalizeSoundWorldState({
+        moodId: "monsoon",
+        weatherId: "scene",
+        authoredWeatherId: "monsoon",
+    });
+    assert.equal(world.weatherId, "monsoon");
+});
+
 test("stopping travel silences rail energy without freezing environment", () => {
     const sound = resolveSoundState({
         travelRunning: false,
@@ -63,4 +72,38 @@ test("rail energy follows physical coasting rather than the transport boolean", 
     });
     assert.ok(moving.layers.rail > nearlyStopped.layers.rail);
     assert.ok(nearlyStopped.layers.rail > 0);
+});
+
+test("authored scenes resolve distinct environmental beds", () => {
+    const sakura = resolveSoundState({
+        moodId: "sakura",
+        weather: { precipitation: 0, visibility: 1 },
+    });
+    const monsoon = resolveSoundState({
+        moodId: "monsoon",
+        weatherId: "monsoon",
+        weather: { precipitation: 1, visibility: 0.35, mistDensity: 0.7 },
+    });
+
+    assert.ok(
+        sakura.layers["ambience-birds"] >
+            sakura.layers["ambience-ominous"],
+    );
+    assert.equal(monsoon.layers["ambience-birds"], 0);
+    assert.ok(monsoon.layers["ambience-ominous"] > 0.9);
+});
+
+test("moisture filters distance while signed wind moves directional layers", () => {
+    const clear = resolveSoundState({
+        moodId: "departure",
+        weather: { visibility: 1, mistDensity: 0, windSpeed: 2, windDirection: 1 },
+    });
+    const obscured = resolveSoundState({
+        moodId: "departure",
+        weather: { visibility: 0.2, mistDensity: 0.8, windSpeed: 2, windDirection: -1 },
+    });
+
+    assert.ok(obscured.filters.distantCutoff < clear.filters.distantCutoff);
+    assert.ok(clear.pans["wind-soft"] > 0);
+    assert.ok(obscured.pans["wind-soft"] < 0);
 });
