@@ -46,6 +46,22 @@ export function rampAudioParam(context, parameter, target, duration = 0.12) {
     else parameter.linearRampToValueAtTime?.(target, now + duration);
 }
 
+export function resolveCueAmbienceGain(envelope, now) {
+    if (!envelope) return 1;
+    const elapsed = Math.max(0, Number(now) - envelope.startedAt);
+    if (elapsed >= envelope.duration) return 1;
+    if (envelope.fadeIn > 0 && elapsed < envelope.fadeIn) {
+        const progress = elapsed / envelope.fadeIn;
+        return 1 + (envelope.floor - 1) * progress;
+    }
+    const fadeOutStart = Math.max(envelope.fadeIn, envelope.duration - envelope.fadeOut);
+    if (envelope.fadeOut > 0 && elapsed > fadeOutStart) {
+        const progress = (elapsed - fadeOutStart) / envelope.fadeOut;
+        return envelope.floor + (1 - envelope.floor) * Math.min(1, progress);
+    }
+    return envelope.floor;
+}
+
 export class SoundEngine {
     constructor({
         manifest = AUDIO_ASSETS,
@@ -76,6 +92,7 @@ export class SoundEngine {
         this.masterVolume = 0.8;
         this.busVolumes = { ...DEFAULT_BUS_VOLUMES };
         this.presentationPaused = false;
+        this.ambienceCueEnvelope = null;
         this.hasWorldState = false;
         this.lastSnapshot = {};
         this.resolved = resolveSoundState(this.lastSnapshot);
@@ -141,14 +158,26 @@ export class SoundEngine {
         for (const id of AUDIO_BUS_IDS) {
             const stateGain = this.context.createGain();
             const volumeGain = this.context.createGain();
+            const filter =
+                id === "environment" && this.context.createBiquadFilter
+                    ? this.context.createBiquadFilter()
+                    : null;
             stateGain.gain.setValueAtTime(0, this.context.currentTime);
             volumeGain.gain.setValueAtTime(
                 this.busVolumes[id],
                 this.context.currentTime,
             );
-            stateGain.connect(volumeGain);
+            if (filter) {
+                filter.type = "lowpass";
+                filter.frequency.setValueAtTime(18000, this.context.currentTime);
+                filter.Q.setValueAtTime(0.35, this.context.currentTime);
+                stateGain.connect(filter);
+                filter.connect(volumeGain);
+            } else {
+                stateGain.connect(volumeGain);
+            }
             volumeGain.connect(this.masterGain);
-            this.buses.set(id, { stateGain, volumeGain });
+            this.buses.set(id, { stateGain, volumeGain, filter });
         }
 
         this.masterGain.gain.setValueAtTime(0, this.context.currentTime);
@@ -214,6 +243,7 @@ export class SoundEngine {
 
     updateWorldState(snapshot) {
         const previousTravelRunning = this.resolved.world.travelRunning;
+        const previousWeatherId = this.resolved.world.weatherId;
         const hadWorldState = this.hasWorldState;
         this.lastSnapshot = snapshot ?? {};
         this.resolved = resolveSoundState(this.lastSnapshot, {
@@ -230,6 +260,14 @@ export class SoundEngine {
             this.playTrigger(
                 this.resolved.world.travelRunning ? "train-start" : "train-stop",
             );
+        }
+        if (
+            hadWorldState &&
+            previousWeatherId !== this.resolved.world.weatherId &&
+            this.resolved.world.weatherId === "monsoon" &&
+            this.state === "ready"
+        ) {
+            this.playTrigger("weather-monsoon");
         }
         return this.resolved;
     }
@@ -252,10 +290,18 @@ export class SoundEngine {
                     duration,
                 );
         }
+        const environmentFilter = this.buses.get("environment")?.filter;
+        if (environmentFilter)
+            rampAudioParam(
+                this.context,
+                environmentFilter.frequency,
+                this.resolved.filters.distantCutoff,
+                0.45,
+            );
         for (const layer of this.layers.values()) this.applyLayerTarget(layer);
     }
 
-    async startLayer(id, { fade = 0.35 } = {}) {
+    async startLayer(id, { fade } = {}) {
         if (this.state !== "ready" || !this.loader)
             throw new Error("Enable the Sound Engine before starting a layer.");
         if (this.layers.has(id)) return this.layers.get(id);
@@ -268,20 +314,34 @@ export class SoundEngine {
         if (this.layers.has(id)) return this.layers.get(id);
 
         const source = this.context.createBufferSource();
+        const panner = this.context.createStereoPanner?.() ?? null;
         const gain = this.context.createGain();
         source.buffer = buffer;
         source.loop = asset.loop;
         if (asset.loopStart > 0) source.loopStart = asset.loopStart;
         if (asset.loopEnd > 0) source.loopEnd = asset.loopEnd;
         gain.gain.setValueAtTime(0, this.context.currentTime);
-        source.connect(gain);
+        if (panner) {
+            source.connect(panner);
+            panner.connect(gain);
+        } else {
+            source.connect(gain);
+        }
         gain.connect(this.buses.get(asset.bus).stateGain);
 
-        const layer = { asset, source, gain, fade, stopped: false };
+        const layer = {
+            asset,
+            source,
+            panner,
+            gain,
+            fade: fade ?? asset.fade,
+            stopped: false,
+        };
         this.layers.set(id, layer);
         source.onended = () => {
             if (this.layers.get(id) === layer) this.layers.delete(id);
             source.disconnect?.();
+            panner?.disconnect?.();
             gain.disconnect?.();
         };
         source.start();
@@ -310,8 +370,17 @@ export class SoundEngine {
     }
 
     playTrigger(trigger) {
+        const triggerGroups = new Set(
+            this.manifest
+                .filter((asset) => asset.trigger === trigger)
+                .map((asset) => asset.triggerGroup),
+        );
         for (const [key, layer] of this.layers) {
-            if (layer.asset.trigger && layer.asset.trigger !== trigger)
+            if (
+                layer.asset.trigger &&
+                triggerGroups.has(layer.asset.triggerGroup) &&
+                layer.asset.trigger !== trigger
+            )
                 this.stopLayer(key, { fade: 0.12 });
         }
         for (const asset of this.manifest) {
@@ -331,48 +400,102 @@ export class SoundEngine {
         const buffer = await this.loader.load(asset);
         if (this.destroyed || this.state !== "ready") return null;
         const source = this.context.createBufferSource();
+        const panner = this.context.createStereoPanner?.() ?? null;
         const gain = this.context.createGain();
         const key = `${id}#${++this.layerInstance}`;
         source.buffer = buffer;
         source.loop = false;
         const roleGain = this.resolved.layers[asset.role] ?? 1;
-        gain.gain.setValueAtTime(
-            asset.gain * roleGain,
-            this.context.currentTime,
+        const peakGain = asset.gain * roleGain;
+        const startedAt = this.context.currentTime;
+        const duration = Math.max(
+            0,
+            Number(buffer.duration) || asset.durationHint || 0,
         );
-        source.connect(gain);
+        const fadeIn = Math.min(asset.fadeIn, duration || asset.fadeIn);
+        const fadeOut = Math.min(
+            asset.fadeOut,
+            Math.max(0, duration - fadeIn),
+        );
+        if (fadeIn > 0) {
+            gain.gain.setValueAtTime(0, startedAt);
+            gain.gain.linearRampToValueAtTime(peakGain, startedAt + fadeIn);
+        } else {
+            gain.gain.setValueAtTime(peakGain, startedAt);
+        }
+        if (duration > 0 && fadeOut > 0) {
+            gain.gain.setValueAtTime(
+                peakGain,
+                startedAt + duration - fadeOut,
+            );
+            gain.gain.linearRampToValueAtTime(0, startedAt + duration);
+        }
+        if (panner) {
+            source.connect(panner);
+            panner.connect(gain);
+        } else {
+            source.connect(gain);
+        }
         gain.connect(this.buses.get(asset.bus).stateGain);
 
         const layer = {
             key,
             asset,
             source,
+            panner,
             gain,
             fade: 0.06,
             stopped: false,
         };
+        if (duration > 0 && asset.duckAmbience < 1) {
+            this.ambienceCueEnvelope = {
+                key,
+                startedAt,
+                duration,
+                fadeIn,
+                fadeOut,
+                floor: asset.duckAmbience,
+            };
+        }
         this.layers.set(key, layer);
         source.onended = () => {
             if (this.layers.get(key) === layer) this.layers.delete(key);
             source.disconnect?.();
+            panner?.disconnect?.();
             gain.disconnect?.();
+            if (this.ambienceCueEnvelope?.key === key)
+                this.ambienceCueEnvelope = null;
         };
         source.start();
         return layer;
     }
 
     applyLayerTarget(layer) {
-        const { asset, source, gain, fade } = layer;
+        const { asset, source, panner, gain, fade } = layer;
         const roleGain = this.resolved.layers[asset.role] ?? 1;
-        rampAudioParam(
-            this.context,
-            gain.gain,
-            asset.gain * roleGain,
-            fade,
-        );
+        if (asset.loop) {
+            const cueControlsAmbience =
+                asset.role.startsWith("ambience-") &&
+                this.ambienceCueEnvelope !== null;
+            const ambienceGain = asset.role.startsWith("ambience-")
+                ? resolveCueAmbienceGain(
+                      this.ambienceCueEnvelope,
+                      this.context.currentTime,
+                  )
+                : 1;
+            rampAudioParam(
+                this.context,
+                gain.gain,
+                asset.gain * roleGain * ambienceGain,
+                cueControlsAmbience ? Math.min(fade, 0.14) : fade,
+            );
+        }
         const playbackRate = this.resolved.playbackRates[asset.role];
         if (playbackRate && source.playbackRate)
             rampAudioParam(this.context, source.playbackRate, playbackRate, 0.2);
+        const pan = this.resolved.pans[asset.role];
+        if (panner?.pan && Number.isFinite(pan))
+            rampAudioParam(this.context, panner.pan, pan, 0.28);
     }
 
     stopLayer(id, { fade = 0.25 } = {}) {
@@ -422,10 +545,12 @@ export class SoundEngine {
         this.destroyed = true;
         for (const id of [...this.layers.keys()]) this.stopLayer(id, { fade: 0 });
         this.loader?.clear();
+        this.ambienceCueEnvelope = null;
         this.pendingLayers.clear();
-        for (const { stateGain, volumeGain } of this.buses.values()) {
+        for (const { stateGain, volumeGain, filter } of this.buses.values()) {
             stateGain.disconnect?.();
             volumeGain.disconnect?.();
+            filter?.disconnect?.();
         }
         this.masterGain?.disconnect?.();
         this.compressor?.disconnect?.();
