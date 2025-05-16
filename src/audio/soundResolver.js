@@ -20,8 +20,21 @@ const SCENE_AMBIENCE = Object.freeze({
     "night-rail": Object.freeze({ birds: 0, melodic: 0.16, ominous: 0.72 }),
 });
 
+const SCENE_SCORE = Object.freeze({
+    departure: Object.freeze({ calm: 1, melancholic: 0, ominous: 0 }),
+    ember: Object.freeze({ calm: 0, melancholic: 0, ominous: 1 }),
+    "blue-hour": Object.freeze({ calm: 0, melancholic: 1, ominous: 0 }),
+    sakura: Object.freeze({ calm: 0.72, melancholic: 0, ominous: 0 }),
+    monsoon: Object.freeze({ calm: 0, melancholic: 0, ominous: 0.9 }),
+    "night-rail": Object.freeze({ calm: 0, melancholic: 1, ominous: 0 }),
+});
+
 function sceneAmbience(sceneId) {
     return SCENE_AMBIENCE[sceneId] ?? SCENE_AMBIENCE.departure;
+}
+
+function sceneScore(sceneId) {
+    return SCENE_SCORE[sceneId] ?? SCENE_SCORE.departure;
 }
 
 export function normalizeSoundWorldState(snapshot = {}) {
@@ -50,7 +63,10 @@ export function normalizeSoundWorldState(snapshot = {}) {
     });
 }
 
-export function resolveSoundState(snapshot = {}, { presentationPaused = false } = {}) {
+export function resolveSoundState(
+    snapshot = {},
+    { presentationPaused = false, musicLevel = 1 } = {},
+) {
     const world = normalizeSoundWorldState(snapshot);
     const speedEnergy =
         Math.sqrt(clamp((world.travelSpeed - 0.1) / 2.4)) *
@@ -61,12 +77,20 @@ export function resolveSoundState(snapshot = {}, { presentationPaused = false } 
         world.mistDensity * 0.55 + (1 - world.visibility) * 0.45,
     );
     const scene = sceneAmbience(world.sceneId);
+    const score = sceneScore(world.sceneId);
     const dryAir = 1 - rainEnergy;
+    const musicWeatherGain = 1 - rainEnergy * 0.08;
+    const scorePresence =
+        Math.max(score.calm, score.melancholic, score.ominous) *
+        musicWeatherGain;
+    const audibleScorePresence = scorePresence * clamp(musicLevel);
     const windPan = clamp(world.windDirection * windEnergy * 0.34, -0.34, 0.34);
 
     const buses = {
-        environment: presentationPaused ? 0.66 : 1,
-        train: presentationPaused ? 0.12 : 1,
+        environment: presentationPaused
+            ? 0.66
+            : 1 - audibleScorePresence * 0.16,
+        train: presentationPaused ? 0.12 : 1 - audibleScorePresence * 0.08,
         music: presentationPaused ? 0.42 : 1,
         voice: presentationPaused ? 0 : 1,
     };
@@ -77,13 +101,19 @@ export function resolveSoundState(snapshot = {}, { presentationPaused = false } 
         layers: Object.freeze({
             ambience: 1,
             "ambience-birds": clamp(
-                scene.birds * dryAir * (0.72 + world.visibility * 0.28),
+                scene.birds *
+                    dryAir *
+                    (0.72 + world.visibility * 0.28) *
+                    (1 - audibleScorePresence * 0.18),
             ),
             "ambience-melodic": clamp(
-                scene.melodic * (1 - rainEnergy * 0.58),
+                scene.melodic *
+                    (1 - rainEnergy * 0.58) *
+                    (1 - audibleScorePresence * 0.62),
             ),
             "ambience-ominous": clamp(
-                scene.ominous + rainEnergy * 0.42 + obscurity * 0.18,
+                (scene.ominous + rainEnergy * 0.42 + obscurity * 0.18) *
+                    (1 - audibleScorePresence * 0.52),
             ),
             "wind-soft": clamp(
                 windEnergy *
@@ -104,6 +134,9 @@ export function resolveSoundState(snapshot = {}, { presentationPaused = false } 
             rail: speedEnergy,
             "train-transition": 1,
             "weather-transition": 1,
+            "music-calm": score.calm * musicWeatherGain,
+            "music-melancholic": score.melancholic * musicWeatherGain,
+            "music-ominous": score.ominous * musicWeatherGain,
             music: 1,
             voice: 1,
         }),
