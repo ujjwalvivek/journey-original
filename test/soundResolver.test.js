@@ -44,8 +44,8 @@ test("stopping travel silences rail energy without freezing environment", () => 
     assert.equal(sound.layers.rail, 0);
     assert.equal(sound.layers["rain-distant"] > 0, true);
     assert.equal(sound.layers["wind-soft"] > 0, true);
-    assert.equal(sound.buses.environment, 1);
-    assert.equal(sound.buses.train, 1);
+    assert.ok(sound.buses.environment > 0.8);
+    assert.ok(sound.buses.train > 0.8);
 });
 
 test("capture presentation softens journey buses but keeps atmosphere", () => {
@@ -90,7 +90,56 @@ test("authored scenes resolve distinct environmental beds", () => {
             sakura.layers["ambience-ominous"],
     );
     assert.equal(monsoon.layers["ambience-birds"], 0);
-    assert.ok(monsoon.layers["ambience-ominous"] > 0.9);
+    assert.ok(
+        monsoon.layers["music-ominous"] >
+            monsoon.layers["ambience-ominous"],
+    );
+});
+
+test("authored scenes select one score and rain restrains its level", () => {
+    const departure = resolveSoundState({
+        moodId: "departure",
+        weather: { precipitation: 0 },
+    });
+    const wetDeparture = resolveSoundState({
+        moodId: "departure",
+        weather: { precipitation: 1 },
+    });
+    const blueHour = resolveSoundState({
+        moodId: "blue-hour",
+        weather: { precipitation: 0 },
+    });
+
+    assert.ok(departure.layers["music-calm"] > 0);
+    assert.equal(departure.layers["music-melancholic"], 0);
+    assert.ok(
+        wetDeparture.layers["music-calm"] < departure.layers["music-calm"],
+    );
+    assert.ok(blueHour.layers["music-melancholic"] > 0);
+    assert.equal(blueHour.layers["music-calm"], 0);
+    assert.ok(departure.buses.music > departure.buses.environment);
+    assert.ok(
+        departure.layers["music-calm"] >
+            departure.layers["ambience-melodic"],
+    );
+});
+
+test("muting the music bus removes score-driven ducking", () => {
+    const audible = resolveSoundState(
+        { moodId: "departure", weather: { precipitation: 0 } },
+        { musicLevel: 1 },
+    );
+    const silent = resolveSoundState(
+        { moodId: "departure", weather: { precipitation: 0 } },
+        { musicLevel: 0 },
+    );
+
+    assert.equal(silent.buses.environment, 1);
+    assert.equal(silent.buses.train, 1);
+    assert.ok(
+        silent.layers["ambience-melodic"] >
+            audible.layers["ambience-melodic"],
+    );
 });
 
 test("moisture filters distance while signed wind moves directional layers", () => {
