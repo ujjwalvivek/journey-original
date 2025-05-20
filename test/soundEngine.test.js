@@ -12,6 +12,7 @@ import {
 } from "../src/audio/audioLoader.js";
 import {
     resolveCueAmbienceGain,
+    resolveCueMusicGain,
     SoundEngine,
 } from "../src/audio/soundEngine.js";
 
@@ -102,6 +103,35 @@ class FakeSource extends FakeNode {
     }
 }
 
+class FakeMediaElement {
+    constructor() {
+        this.src = "";
+        this.loop = false;
+        this.preload = "none";
+        this.playsInline = false;
+        this.playCount = 0;
+        this.pauseCount = 0;
+        this.loaded = false;
+        this.onended = null;
+    }
+
+    async play() {
+        this.playCount += 1;
+    }
+
+    pause() {
+        this.pauseCount += 1;
+    }
+
+    removeAttribute(name) {
+        if (name === "src") this.src = "";
+    }
+
+    load() {
+        this.loaded = true;
+    }
+}
+
 class FakeAudioContext {
     constructor() {
         this.currentTime = 4;
@@ -130,6 +160,10 @@ class FakeAudioContext {
         const source = new FakeSource();
         this.sources.push(source);
         return source;
+    }
+
+    createMediaElementSource() {
+        return new FakeNode();
     }
 
     async decodeAudioData(bytes) {
@@ -184,11 +218,15 @@ test("weather cue envelope crossfades back into ambience", () => {
     assert.equal(resolveCueAmbienceGain(envelope, 33), 0.3);
     assert.ok(resolveCueAmbienceGain(envelope, 35.5) > 0.3);
     assert.equal(resolveCueAmbienceGain(envelope, 38), 1);
+    assert.equal(
+        resolveCueMusicGain({ ...envelope, musicFloor: 0.45 }, 11),
+        0.45,
+    );
 });
 
 test("production audio manifest points to deployed source files", () => {
     const normalized = normalizeAudioManifest(AUDIO_ASSETS);
-    assert.equal(normalized.length, 14);
+    assert.equal(normalized.length, 17);
     for (const asset of normalized) {
         for (const source of asset.sources) {
             const file = new URL(`../public${source.src}`, import.meta.url);
@@ -242,6 +280,10 @@ test("Sound Engine unlocks lazily and starts manifest layers", async () => {
     assert.equal(engine.state, "ready");
     assert.deepEqual(engine.getState().activeLayers, ["rail-test"]);
     assert.equal(engine.context.sources[0].started, true);
+
+    engine.setBusVolume("music", 0);
+    assert.equal(engine.getState().resolved.buses.environment, 1);
+    assert.equal(engine.getState().resolved.buses.train, 1);
 
     engine.updateWorldState({ travelRunning: false, travelSpeed: 1 });
     assert.equal(engine.getState().resolved.layers.rail, 0);
@@ -400,5 +442,130 @@ test("authored Monsoon scene fires the storm arrival cue", async () => {
         [...engine.layers.keys()].some((id) => id.startsWith("storm-test#")),
         true,
     );
+    await engine.destroy();
+});
+
+test("Monsoon score begins halfway through its transition cue", async () => {
+    const mediaElements = [];
+    const engine = new SoundEngine({
+        manifest: [
+            {
+                id: "ominous-test",
+                label: "Night Rain",
+                bus: "music",
+                role: "music-ominous",
+                src: "/ominous.opus",
+                stream: true,
+                reactive: true,
+                fade: 6,
+            },
+            {
+                id: "storm-test",
+                bus: "environment",
+                role: "weather-transition",
+                src: "/storm.opus",
+                loop: false,
+                durationHint: 10,
+                fadeOut: 2,
+                duckAmbience: 0.3,
+                musicEntryFraction: 0.5,
+                musicEntryFade: 3,
+                trigger: "weather-monsoon",
+                triggerGroup: "weather",
+            },
+        ],
+        AudioContextClass: FakeAudioContext,
+        fetchFn: async () => ({
+            ok: true,
+            arrayBuffer: async () => new ArrayBuffer(8),
+        }),
+        createMediaElement: () => {
+            const media = new FakeMediaElement();
+            mediaElements.push(media);
+            return media;
+        },
+    });
+    engine.updateWorldState({ moodId: "departure", weatherId: "clear" });
+    await engine.unlock();
+
+    engine.updateWorldState({ moodId: "monsoon", weatherId: "monsoon" });
+    await new Promise((resolve) => setImmediate(resolve));
+    const score = engine.layers.get("ominous-test");
+    assert.ok(score);
+    assert.equal(score.waitingForEntry, true);
+    assert.equal(mediaElements[0].playCount, 0);
+
+    engine.context.currentTime += 4.9;
+    engine.updateWorldState({ moodId: "monsoon", weatherId: "monsoon" });
+    assert.equal(mediaElements[0].playCount, 0);
+
+    engine.context.currentTime += 0.2;
+    engine.updateWorldState({ moodId: "monsoon", weatherId: "monsoon" });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(score.waitingForEntry, false);
+    assert.equal(mediaElements[0].playCount, 1);
+    assert.deepEqual(score.gain.gain.events.at(-1), ["ramp", 0.9, 12.1]);
+    await engine.destroy();
+});
+
+test("streamed scores crossfade and revive an interrupted deck", async () => {
+    const mediaElements = [];
+    const scoreManifest = [
+        {
+            id: "calm-test",
+            label: "Calm",
+            bus: "music",
+            role: "music-calm",
+            src: "/calm.opus",
+            stream: true,
+            reactive: true,
+            fade: 7,
+        },
+        {
+            id: "melancholic-test",
+            label: "Melancholic",
+            bus: "music",
+            role: "music-melancholic",
+            src: "/melancholic.opus",
+            stream: true,
+            reactive: true,
+            fade: 7,
+        },
+    ];
+    const engine = new SoundEngine({
+        manifest: scoreManifest,
+        AudioContextClass: FakeAudioContext,
+        fetchFn: async () => {
+            throw new Error("streamed scores must not use fetch/decode");
+        },
+        createMediaElement: () => {
+            const media = new FakeMediaElement();
+            mediaElements.push(media);
+            return media;
+        },
+    });
+    engine.updateWorldState({ moodId: "departure" });
+    await engine.unlock();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(engine.layers.has("calm-test"), true);
+    assert.equal(mediaElements[0].playCount, 1);
+    const scheduledFadeEvents =
+        engine.layers.get("calm-test").gain.gain.events.length;
+    engine.updateWorldState({ moodId: "departure" });
+    assert.equal(
+        engine.layers.get("calm-test").gain.gain.events.length,
+        scheduledFadeEvents,
+    );
+
+    engine.updateWorldState({ moodId: "blue-hour" });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(engine.layers.get("calm-test").stopped, true);
+    assert.equal(engine.layers.has("melancholic-test"), true);
+
+    engine.updateWorldState({ moodId: "departure" });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(engine.layers.get("calm-test").stopped, false);
+    assert.equal(mediaElements[0].playCount, 2);
+    assert.equal(engine.layers.get("melancholic-test").stopped, true);
     await engine.destroy();
 });
