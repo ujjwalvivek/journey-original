@@ -571,6 +571,35 @@ canvas {
     margin-top: 10px;
 }
 
+.sound-score-readout {
+    margin-top: 11px;
+    padding: 8px 9px;
+    border-left: 1px solid rgba(255, 126, 78, 0.62);
+    background: rgba(255, 224, 205, 0.035);
+}
+
+.sound-score-readout small,
+.sound-score-readout strong {
+    display: block;
+}
+
+.sound-score-readout small {
+    margin-bottom: 3px;
+    color: rgba(255, 210, 183, 0.46);
+    font-size: 7px;
+    letter-spacing: 0.1em;
+}
+
+.sound-score-readout strong {
+    overflow: hidden;
+    color: rgba(255, 237, 225, 0.82);
+    font-size: 8px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .sound-error {
     display: block;
     margin-top: 8px;

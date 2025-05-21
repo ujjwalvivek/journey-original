@@ -79,6 +79,8 @@ const captureDownloadButton = ref(null);
 const soundState = ref("locked");
 const soundMuted = ref(false);
 const soundVolume = ref(0.8);
+const musicVolume = ref(1);
+const activeScore = ref("WAITING FOR SOUND");
 const soundError = ref("");
 const soundSourceCount = AUDIO_ASSETS.length;
 
@@ -537,6 +539,14 @@ watch(soundVolume, (value) => {
         // Volume persistence is optional when storage is restricted.
     }
 });
+watch(musicVolume, (value) => {
+    soundEngine?.setBusVolume("music", value);
+    try {
+        window.localStorage.setItem("journey.musicVolume", String(value));
+    } catch {
+        // Volume persistence is optional when storage is restricted.
+    }
+});
 
 onMounted(async () => {
     try {
@@ -546,6 +556,14 @@ onMounted(async () => {
             );
             if (Number.isFinite(savedVolume))
                 soundVolume.value = Math.max(0, Math.min(1, savedVolume));
+            const savedMusicVolume = Number(
+                window.localStorage.getItem("journey.musicVolume"),
+            );
+            if (Number.isFinite(savedMusicVolume))
+                musicVolume.value = Math.max(
+                    0,
+                    Math.min(1, savedMusicVolume),
+                );
         } catch {
             // Storage can be unavailable in privacy-restricted contexts.
         }
@@ -555,6 +573,7 @@ onMounted(async () => {
             },
         });
         soundEngine.setMasterVolume(soundVolume.value);
+        soundEngine.setBusVolume("music", musicVolume.value);
 
         if (!navigator.gpu) {
             await showRendererError(
@@ -624,7 +643,20 @@ onMounted(async () => {
 
         soundTimer = window.setInterval(() => {
             const stats = renderer?.getStats();
-            if (stats) soundEngine?.updateWorldState(stats);
+            if (stats) {
+                soundEngine?.updateWorldState(stats);
+                const scores = soundEngine?.getState().activeScores ?? [];
+                activeScore.value =
+                    scores.length > 0
+                        ? scores
+                              .map(({ label, fadingOut }) =>
+                                  fadingOut ? `${label} · OUT` : label,
+                              )
+                              .join(" → ")
+                        : soundState.value === "ready"
+                          ? "NO SCORE"
+                          : "WAITING FOR SOUND";
+            }
         }, 50);
 
         window.addEventListener("keydown", onKeydown);
@@ -862,6 +894,29 @@ onBeforeUnmount(() => {
                                         :disabled="soundState === 'error'"
                                         :style="{
                                             '--range-progress': `${soundVolume * 100}%`,
+                                        }"
+                                    />
+                                </label>
+                                <div class="sound-score-readout">
+                                    <small>CURRENT SCORE</small>
+                                    <strong>{{ activeScore }}</strong>
+                                </div>
+                                <label class="range-row sound-volume">
+                                    <span
+                                        >Music volume
+                                        <output
+                                            >{{ Math.round(musicVolume * 100) }}%</output
+                                        ></span
+                                    >
+                                    <input
+                                        v-model.number="musicVolume"
+                                        type="range"
+                                        min="0"
+                                        max="1"
+                                        step="0.01"
+                                        :disabled="soundState === 'error'"
+                                        :style="{
+                                            '--range-progress': `${musicVolume * 100}%`,
                                         }"
                                     />
                                 </label>
