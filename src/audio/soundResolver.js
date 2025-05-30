@@ -1,3 +1,5 @@
+import { resolveSoundSceneProfile } from "./soundProfiles.js";
+
 const clamp = (value, minimum = 0, maximum = 1) => {
     const number = Number(value);
     return Math.max(
@@ -11,32 +13,6 @@ const smoothstep = (minimum, maximum, value) => {
     return amount * amount * (3 - 2 * amount);
 };
 
-const SCENE_AMBIENCE = Object.freeze({
-    departure: Object.freeze({ birds: 0.22, melodic: 0.62, ominous: 0.02 }),
-    ember: Object.freeze({ birds: 0.04, melodic: 0.38, ominous: 0.2 }),
-    "blue-hour": Object.freeze({ birds: 0.08, melodic: 0.56, ominous: 0.18 }),
-    sakura: Object.freeze({ birds: 0.82, melodic: 0.38, ominous: 0 }),
-    monsoon: Object.freeze({ birds: 0, melodic: 0.08, ominous: 0.78 }),
-    "night-rail": Object.freeze({ birds: 0, melodic: 0.16, ominous: 0.72 }),
-});
-
-const SCENE_SCORE = Object.freeze({
-    departure: Object.freeze({ calm: 1, melancholic: 0, ominous: 0 }),
-    ember: Object.freeze({ calm: 0, melancholic: 0, ominous: 1 }),
-    "blue-hour": Object.freeze({ calm: 0, melancholic: 1, ominous: 0 }),
-    sakura: Object.freeze({ calm: 0.72, melancholic: 0, ominous: 0 }),
-    monsoon: Object.freeze({ calm: 0, melancholic: 0, ominous: 0.9 }),
-    "night-rail": Object.freeze({ calm: 0, melancholic: 1, ominous: 0 }),
-});
-
-function sceneAmbience(sceneId) {
-    return SCENE_AMBIENCE[sceneId] ?? SCENE_AMBIENCE.departure;
-}
-
-function sceneScore(sceneId) {
-    return SCENE_SCORE[sceneId] ?? SCENE_SCORE.departure;
-}
-
 export function normalizeSoundWorldState(snapshot = {}) {
     const weather = snapshot.weather ?? {};
     const selectedWeatherId = String(snapshot.weatherId || weather.id || "scene");
@@ -47,6 +23,7 @@ export function normalizeSoundWorldState(snapshot = {}) {
     return Object.freeze({
         sceneId: String(snapshot.moodId || snapshot.sceneId || "departure"),
         cueId: String(snapshot.cueId || "departure"),
+        journeyTime: Math.max(0, Number(snapshot.travelTime) || 0),
         weatherId: effectiveWeatherId,
         travelRunning: snapshot.travelRunning !== false,
         travelSpeed: clamp(snapshot.travelSpeed || 1, 0.1, 2.5),
@@ -76,8 +53,7 @@ export function resolveSoundState(
     const obscurity = clamp(
         world.mistDensity * 0.55 + (1 - world.visibility) * 0.45,
     );
-    const scene = sceneAmbience(world.sceneId);
-    const score = sceneScore(world.sceneId);
+    const { ambience: scene, score } = resolveSoundSceneProfile(world.sceneId);
     const dryAir = 1 - rainEnergy;
     const musicWeatherGain = 1 - rainEnergy * 0.08;
     const scorePresence =
