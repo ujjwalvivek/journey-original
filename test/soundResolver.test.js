@@ -24,6 +24,7 @@ test("sound world state clamps renderer values", () => {
     assert.equal(world.windDirection, -1);
     assert.equal(world.mistDensity, 1);
     assert.equal(world.visibility, 0);
+    assert.equal(world.journeyTime, 0);
 });
 
 test("authored scene weather resolves to its physical weather id", () => {
