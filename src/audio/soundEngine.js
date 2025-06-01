@@ -13,6 +13,14 @@ const DEFAULT_BUS_VOLUMES = Object.freeze({
     voice: 1,
 });
 
+export const MASTER_DYNAMICS = Object.freeze({
+    threshold: -3.5,
+    knee: 5,
+    ratio: 2.5,
+    attack: 0.012,
+    release: 0.28,
+});
+
 const clamp = (value, minimum = 0, maximum = 1) => {
     const number = Number(value);
     return Math.max(
@@ -83,6 +91,7 @@ export class SoundEngine {
         canPlayType = defaultCanPlayType,
         createMediaElement = defaultCreateMediaElement,
         onStateChange = () => {},
+        onLayerError = () => {},
     } = {}) {
         this.manifest = normalizeAudioManifest(manifest);
         this.assets = new Map(this.manifest.map((asset) => [asset.id, asset]));
@@ -91,6 +100,7 @@ export class SoundEngine {
         this.canPlayType = canPlayType;
         this.createMediaElement = createMediaElement;
         this.onStateChange = onStateChange;
+        this.onLayerError = onLayerError;
 
         this.state = "locked";
         this.context = null;
@@ -99,13 +109,20 @@ export class SoundEngine {
         this.compressor = null;
         this.buses = new Map();
         this.layers = new Map();
-        this.pendingLayers = new Set();
+        this.pendingLayers = new Map();
+        this.failedAssets = new Map();
+        this.lastTriggerAt = new Map();
+        this.manualAuditionToken = 0;
         this.layerInstance = 0;
         this.unlockPromise = null;
         this.destroyed = false;
         this.muted = false;
         this.masterVolume = 0.8;
         this.busVolumes = { ...DEFAULT_BUS_VOLUMES };
+        this.busMuted = Object.fromEntries(
+            AUDIO_BUS_IDS.map((id) => [id, false]),
+        );
+        this.soloBus = "";
         this.presentationPaused = false;
         this.ambienceCueEnvelope = null;
         this.hasWorldState = false;
@@ -162,14 +179,7 @@ export class SoundEngine {
         this.masterGain.connect(this.compressor);
         this.compressor.connect(this.context.destination);
 
-        const compressorValues = {
-            threshold: -8,
-            knee: 8,
-            ratio: 5,
-            attack: 0.006,
-            release: 0.18,
-        };
-        for (const [key, value] of Object.entries(compressorValues))
+        for (const [key, value] of Object.entries(MASTER_DYNAMICS))
             this.compressor[key]?.setValueAtTime?.(value, this.context.currentTime);
 
         for (const id of AUDIO_BUS_IDS) {
@@ -181,7 +191,7 @@ export class SoundEngine {
                     : null;
             stateGain.gain.setValueAtTime(0, this.context.currentTime);
             volumeGain.gain.setValueAtTime(
-                this.busVolumes[id],
+                this.resolveBusOutput(id),
                 this.context.currentTime,
             );
             if (filter) {
@@ -207,14 +217,14 @@ export class SoundEngine {
         this.applyMix(0.08);
         for (const asset of this.manifest.filter(({ preload }) => preload))
             this.loader.load(asset).catch((error) => {
-                console.error(`Could not preload audio layer ${asset.id}:`, error);
+                this.reportLayerError(asset, error);
             });
         await Promise.all(
             this.manifest
                 .filter(({ autoplay }) => autoplay)
                 .map(({ id }) =>
                     this.startLayer(id).catch((error) => {
-                        console.error(`Could not start audio layer ${id}:`, error);
+                        this.reportLayerError(this.assets.get(id), error);
                     }),
                 ),
         );
@@ -237,23 +247,53 @@ export class SoundEngine {
         if (!AUDIO_BUS_IDS.includes(id))
             throw new Error(`Unknown audio bus: ${id}`);
         this.busVolumes[id] = clamp(value);
+        this.applyBusOutput(id);
+        if (id === "music") this.refreshResolvedMix();
+        return this.busVolumes[id];
+    }
+
+    resolveBusOutput(id) {
+        if (this.busMuted[id]) return 0;
+        if (this.soloBus && this.soloBus !== id) return 0;
+        return this.busVolumes[id];
+    }
+
+    applyBusOutput(id, duration = 0.1) {
         const bus = this.buses.get(id);
         if (bus)
             rampAudioParam(
                 this.context,
                 bus.volumeGain.gain,
-                this.busVolumes[id],
-                0.1,
+                this.resolveBusOutput(id),
+                duration,
             );
-        if (id === "music") {
-            this.resolved = resolveSoundState(this.lastSnapshot, {
-                presentationPaused: this.presentationPaused,
-                musicLevel: this.busVolumes.music,
-            });
-            this.applyMix();
-            this.ensureReactiveLayers();
-        }
-        return this.busVolumes[id];
+    }
+
+    refreshResolvedMix() {
+        this.resolved = resolveSoundState(this.lastSnapshot, {
+            presentationPaused: this.presentationPaused,
+            musicLevel: this.resolveBusOutput("music"),
+        });
+        this.applyMix();
+        this.ensureReactiveLayers();
+    }
+
+    setBusMuted(id, muted) {
+        if (!AUDIO_BUS_IDS.includes(id))
+            throw new Error(`Unknown audio bus: ${id}`);
+        this.busMuted[id] = Boolean(muted);
+        this.applyBusOutput(id);
+        if (id === "music") this.refreshResolvedMix();
+        return this.busMuted[id];
+    }
+
+    setSoloBus(id = "") {
+        if (id && !AUDIO_BUS_IDS.includes(id))
+            throw new Error(`Unknown audio bus: ${id}`);
+        this.soloBus = id;
+        for (const busId of AUDIO_BUS_IDS) this.applyBusOutput(busId);
+        this.refreshResolvedMix();
+        return this.soloBus;
     }
 
     applyMasterGain(duration = 0.1) {
@@ -269,14 +309,20 @@ export class SoundEngine {
     updateWorldState(snapshot) {
         const previousTravelRunning = this.resolved.world.travelRunning;
         const previousWeatherId = this.resolved.world.weatherId;
+        const previousJourneyTime = this.resolved.world.journeyTime;
         const hadWorldState = this.hasWorldState;
         this.lastSnapshot = snapshot ?? {};
         this.resolved = resolveSoundState(this.lastSnapshot, {
             presentationPaused: this.presentationPaused,
-            musicLevel: this.busVolumes.music,
+            musicLevel: this.resolveBusOutput("music"),
         });
         this.hasWorldState = true;
+        const journeyRestarted =
+            hadWorldState &&
+            this.resolved.world.journeyTime < previousJourneyTime - 0.25;
+        if (journeyRestarted) this.resetAudioTimeline();
         if (
+            !journeyRestarted &&
             hadWorldState &&
             previousTravelRunning !== this.resolved.world.travelRunning &&
             this.state === "ready"
@@ -286,6 +332,7 @@ export class SoundEngine {
             );
         }
         if (
+            !journeyRestarted &&
             hadWorldState &&
             previousWeatherId !== this.resolved.world.weatherId &&
             this.resolved.world.weatherId === "monsoon" &&
@@ -295,7 +342,19 @@ export class SoundEngine {
         }
         this.applyMix();
         this.ensureReactiveLayers();
+        if (journeyRestarted)
+            this.restartScore().catch((error) => {
+                console.error("Could not restart the journey score:", error);
+            });
         return this.resolved;
+    }
+
+    resetAudioTimeline() {
+        this.lastTriggerAt.clear();
+        this.ambienceCueEnvelope = null;
+        for (const [id, layer] of this.layers) {
+            if (!layer.asset.loop) this.stopLayer(id, { fade: 0.12 });
+        }
     }
 
     setPresentationPaused(paused) {
@@ -384,6 +443,7 @@ export class SoundEngine {
             gain.disconnect?.();
         };
         source.start();
+        this.failedAssets.delete(asset.id);
         this.applyLayerTarget(layer);
         return layer;
     }
@@ -395,7 +455,8 @@ export class SoundEngine {
             throw new Error(`Streaming audio is unavailable for ${asset.id}.`);
 
         media.src = selected.src;
-        media.loop = asset.loop;
+        const hasAuthoredLoopWindow = asset.loop && asset.loopEnd > 0;
+        media.loop = asset.loop && !hasAuthoredLoopWindow;
         media.preload = "auto";
         media.playsInline = true;
         const source = this.context.createMediaElementSource(media);
@@ -416,10 +477,20 @@ export class SoundEngine {
             waitingForEntry: false,
             startingEntry: false,
             entryFadeUntil: 0,
+            startPromise: null,
             stopped: false,
         };
         this.layers.set(asset.id, layer);
         media.onended = () => this.releaseStreamLayer(asset.id, layer);
+        if (hasAuthoredLoopWindow)
+            media.ontimeupdate = () => {
+                if (media.currentTime < asset.loopEnd) return;
+                media.currentTime = asset.loopStart;
+                media.play().catch((error) => {
+                    this.reportLayerError(asset, error);
+                    this.releaseStreamLayer(asset.id, layer);
+                });
+            };
         const musicEntryAt = this.ambienceCueEnvelope?.musicEntryAt ?? 0;
         if (asset.bus === "music" && musicEntryAt > this.context.currentTime) {
             layer.waitingForEntry = true;
@@ -427,10 +498,14 @@ export class SoundEngine {
             return layer;
         }
         try {
-            await media.play();
+            layer.startPromise = media.play();
+            await layer.startPromise;
+            layer.startPromise = null;
+            this.failedAssets.delete(asset.id);
             this.applyLayerTarget(layer);
             return layer;
         } catch (error) {
+            layer.startPromise = null;
             this.releaseStreamLayer(asset.id, layer);
             throw error;
         }
@@ -449,10 +524,11 @@ export class SoundEngine {
             const entryFade =
                 this.ambienceCueEnvelope?.musicEntryFade ||
                 Math.min(layer.fade, 3);
-            layer.media
+            layer.startPromise = layer.media
                 .play()
                 .then(() => {
                     if (layer.stopped) return;
+                    layer.startPromise = null;
                     layer.startingEntry = false;
                     layer.entryFadeUntil =
                         this.context.currentTime + entryFade;
@@ -462,7 +538,8 @@ export class SoundEngine {
                     });
                 })
                 .catch((error) => {
-                    console.error(`Could not start deferred score ${id}:`, error);
+                    layer.startPromise = null;
+                    this.reportLayerError(layer.asset, error);
                     this.releaseStreamLayer(id, layer);
                 });
         }
@@ -488,6 +565,7 @@ export class SoundEngine {
         layer.media?.pause?.();
         if (layer.media) {
             layer.media.onended = null;
+            layer.media.ontimeupdate = null;
             layer.media.removeAttribute?.("src");
             layer.media.load?.();
         }
@@ -500,6 +578,7 @@ export class SoundEngine {
         if (this.state !== "ready") return;
         for (const asset of this.manifest) {
             if (!asset.reactive) continue;
+            if (this.failedAssets.has(asset.id)) continue;
             const target = this.resolved.layers[asset.role] ?? 0;
             const existing = this.layers.get(asset.id);
             if (asset.stream && target <= 0.015) {
@@ -513,20 +592,43 @@ export class SoundEngine {
                 this.pendingLayers.has(asset.id)
             )
                 continue;
-            this.pendingLayers.add(asset.id);
-            this.startLayer(asset.id)
+            const request = this.startLayer(asset.id)
                 .catch((error) => {
-                    console.error(`Could not start audio layer ${asset.id}:`, error);
+                    this.reportLayerError(asset, error);
                 })
                 .finally(() => this.pendingLayers.delete(asset.id));
+            this.pendingLayers.set(asset.id, request);
         }
     }
 
-    playTrigger(trigger) {
+    reportLayerError(asset, error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.failedAssets.set(asset.id, message);
+        console.error(`Could not start audio layer ${asset.id}:`, error);
+        this.onLayerError({ id: asset.id, label: asset.label, message });
+    }
+
+    retryFailedLayers() {
+        this.failedAssets.clear();
+        this.ensureReactiveLayers();
+    }
+
+    playTrigger(trigger, { force = false, auditionToken = 0 } = {}) {
+        if (this.state !== "ready") return false;
+        const matchingAssets = this.manifest.filter(
+            (asset) => asset.trigger === trigger,
+        );
+        if (matchingAssets.length === 0) return false;
+        const now = this.context.currentTime;
+        const cooldown = Math.max(
+            0,
+            ...matchingAssets.map((asset) => asset.cooldown),
+        );
+        const lastTriggered = this.lastTriggerAt.get(trigger) ?? -Infinity;
+        if (!force && now - lastTriggered < cooldown) return false;
+        this.lastTriggerAt.set(trigger, now);
         const triggerGroups = new Set(
-            this.manifest
-                .filter((asset) => asset.trigger === trigger)
-                .map((asset) => asset.triggerGroup),
+            matchingAssets.map((asset) => asset.triggerGroup),
         );
         for (const [key, layer] of this.layers) {
             if (
@@ -536,35 +638,98 @@ export class SoundEngine {
             )
                 this.stopLayer(key, { fade: 0.12 });
         }
-        for (const asset of this.manifest) {
-            if (asset.trigger === trigger) {
-                if (asset.durationHint > 0 && asset.musicEntryFraction > 0) {
-                    const startedAt = this.context.currentTime;
-                    const musicEntryAt =
-                        startedAt +
-                        asset.durationHint * asset.musicEntryFraction;
-                    this.ambienceCueEnvelope = {
-                        key: `pending:${asset.id}`,
-                        startedAt,
-                        duration: asset.durationHint,
-                        fadeIn: asset.fadeIn,
-                        fadeOut: asset.fadeOut,
-                        ambienceFloor: asset.duckAmbience,
-                        musicFloor: asset.duckMusic,
-                        bus: asset.bus,
-                        musicEntryAt,
-                        musicEntryFade: asset.musicEntryFade,
-                    };
-                    this.deferIncomingScores(musicEntryAt);
-                }
-                this.playOneShot(asset.id).catch((error) => {
-                    console.error(`Could not play audio cue ${asset.id}:`, error);
-                });
+        for (const asset of matchingAssets) {
+            if (asset.durationHint > 0 && asset.musicEntryFraction > 0) {
+                const startedAt = this.context.currentTime;
+                const musicEntryAt =
+                    startedAt + asset.durationHint * asset.musicEntryFraction;
+                this.ambienceCueEnvelope = {
+                    key: `pending:${asset.id}`,
+                    startedAt,
+                    duration: asset.durationHint,
+                    fadeIn: asset.fadeIn,
+                    fadeOut: asset.fadeOut,
+                    ambienceFloor: asset.duckAmbience,
+                    musicFloor: asset.duckMusic,
+                    bus: asset.bus,
+                    musicEntryAt,
+                    musicEntryFade: asset.musicEntryFade,
+                };
+                this.deferIncomingScores(musicEntryAt);
             }
+            this.playOneShot(asset.id, { auditionToken }).catch((error) => {
+                this.reportLayerError(asset, error);
+            });
+        }
+        return true;
+    }
+
+    previewTrigger(trigger) {
+        const auditionToken = this.beginManualAudition();
+        return this.playTrigger(trigger, { force: true, auditionToken });
+    }
+
+    beginManualAudition() {
+        this.manualAuditionToken += 1;
+        this.ambienceCueEnvelope = null;
+        for (const [id, layer] of this.layers) {
+            if (!layer.asset.loop) this.stopLayer(id, { fade: 0 });
+        }
+        return this.manualAuditionToken;
+    }
+
+    async restartScore() {
+        this.beginManualAudition();
+        const asset = this.manifest.find(
+            (candidate) =>
+                candidate.stream &&
+                candidate.bus === "music" &&
+                (this.resolved.layers[candidate.role] ?? 0) > 0.015,
+        );
+        if (!asset) return false;
+
+        let layer = this.layers.get(asset.id);
+        if (!layer) {
+            layer = await (this.pendingLayers.get(asset.id) ??
+                this.startLayer(asset.id));
+            return Boolean(layer);
+        }
+        if (layer.startPromise) {
+            try {
+                await layer.startPromise;
+            } catch {
+                return false;
+            }
+        }
+        if (!layer.media) return false;
+        if (layer.stopped) {
+            globalThis.clearTimeout(layer.cleanupTimer);
+            layer.cleanupTimer = 0;
+            layer.stopped = false;
+        }
+        layer.media.pause();
+        layer.media.currentTime = 0;
+        layer.waitingForEntry = false;
+        layer.startingEntry = true;
+        rampAudioParam(this.context, layer.gain.gain, 0, 0.12);
+        try {
+            await layer.media.play();
+            if (layer.stopped) return false;
+            layer.startingEntry = false;
+            layer.entryFadeUntil = this.context.currentTime + 2;
+            this.applyLayerTarget(layer, {
+                gainDuration: 2,
+                forceGain: true,
+            });
+            return true;
+        } catch (error) {
+            this.reportLayerError(layer.asset, error);
+            this.releaseStreamLayer(layer.asset.id, layer);
+            return false;
         }
     }
 
-    async playOneShot(id) {
+    async playOneShot(id, { auditionToken = 0 } = {}) {
         if (this.state !== "ready" || !this.loader)
             throw new Error("Enable the Sound Engine before playing a cue.");
         const asset = this.assets.get(id);
@@ -572,6 +737,8 @@ export class SoundEngine {
 
         const buffer = await this.loader.load(asset);
         if (this.destroyed || this.state !== "ready") return null;
+        if (auditionToken && auditionToken !== this.manualAuditionToken)
+            return null;
         const source = this.context.createBufferSource();
         const panner = this.context.createStereoPanner?.() ?? null;
         const gain = this.context.createGain();
@@ -652,6 +819,7 @@ export class SoundEngine {
                 this.ambienceCueEnvelope = null;
         };
         source.start();
+        this.failedAssets.delete(asset.id);
         return layer;
     }
 
@@ -667,7 +835,7 @@ export class SoundEngine {
                 asset.role.startsWith("ambience-") &&
                 this.ambienceCueEnvelope !== null;
             const cueAudibility = this.ambienceCueEnvelope
-                ? this.busVolumes[this.ambienceCueEnvelope.bus] ?? 1
+                ? this.resolveBusOutput(this.ambienceCueEnvelope.bus)
                 : 1;
             const rawAmbienceGain = asset.role.startsWith("ambience-")
                 ? resolveCueAmbienceGain(
@@ -769,7 +937,25 @@ export class SoundEngine {
             muted: this.muted,
             masterVolume: this.masterVolume,
             busVolumes: Object.freeze({ ...this.busVolumes }),
+            busMuted: Object.freeze({ ...this.busMuted }),
+            soloBus: this.soloBus,
             activeLayers: Object.freeze([...this.layers.keys()]),
+            layerDetails: Object.freeze(
+                [...this.layers.values()].map(({ asset, stopped }) => ({
+                    id: asset.id,
+                    label: asset.label,
+                    bus: asset.bus,
+                    role: asset.role,
+                    fadingOut: stopped,
+                })),
+            ),
+            failedLayers: Object.freeze(
+                [...this.failedAssets].map(([id, message]) => ({
+                    id,
+                    label: this.assets.get(id)?.label ?? id,
+                    message,
+                })),
+            ),
             activeScores: Object.freeze(
                 [...this.layers.values()]
                     .filter(
@@ -792,6 +978,9 @@ export class SoundEngine {
         this.loader?.clear();
         this.ambienceCueEnvelope = null;
         this.pendingLayers.clear();
+        this.failedAssets.clear();
+        this.lastTriggerAt.clear();
+        this.manualAuditionToken += 1;
         for (const { stateGain, volumeGain, filter } of this.buses.values()) {
             stateGain.disconnect?.();
             volumeGain.disconnect?.();
