@@ -11,6 +11,7 @@ import {
     selectPlayableSource,
 } from "../src/audio/audioLoader.js";
 import {
+    MASTER_DYNAMICS,
     resolveCueAmbienceGain,
     resolveCueMusicGain,
     SoundEngine,
@@ -113,6 +114,7 @@ class FakeMediaElement {
         this.pauseCount = 0;
         this.loaded = false;
         this.onended = null;
+        this.ontimeupdate = null;
     }
 
     async play() {
@@ -280,10 +282,20 @@ test("Sound Engine unlocks lazily and starts manifest layers", async () => {
     assert.equal(engine.state, "ready");
     assert.deepEqual(engine.getState().activeLayers, ["rail-test"]);
     assert.equal(engine.context.sources[0].started, true);
+    assert.equal(engine.compressor.threshold.value, MASTER_DYNAMICS.threshold);
+    assert.equal(engine.compressor.ratio.value, MASTER_DYNAMICS.ratio);
 
     engine.setBusVolume("music", 0);
     assert.equal(engine.getState().resolved.buses.environment, 1);
     assert.equal(engine.getState().resolved.buses.train, 1);
+
+    engine.setBusMuted("train", true);
+    assert.equal(engine.buses.get("train").volumeGain.gain.value, 0);
+    engine.setBusMuted("train", false);
+    engine.setSoloBus("train");
+    assert.equal(engine.buses.get("environment").volumeGain.gain.value, 0);
+    assert.equal(engine.buses.get("train").volumeGain.gain.value, 1);
+    engine.setSoloBus("");
 
     engine.updateWorldState({ travelRunning: false, travelSpeed: 1 });
     assert.equal(engine.getState().resolved.layers.rail, 0);
@@ -405,6 +417,117 @@ test("weather arrival cues do not cancel transport cues", async () => {
         [...engine.layers.keys()].some((id) => id.startsWith("storm-test#")),
         true,
     );
+    await engine.destroy();
+});
+
+test("trigger cooldowns reject chatter while manual previews remain available", async () => {
+    const engine = new SoundEngine({
+        manifest: [
+            {
+                id: "start-test",
+                bus: "train",
+                role: "train-transition",
+                src: "/start.ogg",
+                loop: false,
+                trigger: "train-start",
+                cooldown: 2,
+            },
+        ],
+        AudioContextClass: FakeAudioContext,
+        fetchFn: async () => ({
+            ok: true,
+            arrayBuffer: async () => new ArrayBuffer(8),
+        }),
+    });
+    await engine.unlock();
+    assert.equal(engine.playTrigger("train-start"), true);
+    assert.equal(engine.playTrigger("train-start"), false);
+    assert.equal(engine.previewTrigger("train-start"), true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(
+        [...engine.layers.keys()].filter((id) => id.startsWith("start-test#"))
+            .length,
+        2,
+    );
+    await engine.destroy();
+});
+
+test("manual cue previews are exclusive even while the previous cue loads", async () => {
+    const engine = new SoundEngine({
+        manifest: [
+            {
+                id: "start-test",
+                bus: "train",
+                role: "train-transition",
+                src: "/start.ogg",
+                loop: false,
+                trigger: "train-start",
+            },
+            {
+                id: "stop-test",
+                bus: "train",
+                role: "train-transition",
+                src: "/stop.ogg",
+                loop: false,
+                trigger: "train-stop",
+            },
+        ],
+        AudioContextClass: FakeAudioContext,
+        fetchFn: async () => ({
+            ok: true,
+            arrayBuffer: async () => new ArrayBuffer(8),
+        }),
+    });
+    await engine.unlock();
+    engine.previewTrigger("train-start");
+    engine.previewTrigger("train-stop");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(
+        [...engine.layers.keys()].some((id) => id.startsWith("start-test#")),
+        false,
+    );
+    assert.equal(
+        [...engine.layers.keys()].filter((id) => id.startsWith("stop-test#"))
+            .length,
+        1,
+    );
+    await engine.destroy();
+});
+
+test("failed reactive layers are quarantined until an explicit retry", async () => {
+    let requests = 0;
+    const failures = [];
+    const engine = new SoundEngine({
+        manifest: [
+            {
+                id: "broken-wind",
+                bus: "environment",
+                role: "wind-soft",
+                src: "/broken.ogg",
+                reactive: true,
+            },
+        ],
+        AudioContextClass: FakeAudioContext,
+        fetchFn: async () => {
+            requests += 1;
+            throw new Error("network unavailable");
+        },
+        onLayerError: (failure) => failures.push(failure),
+    });
+    engine.updateWorldState({ weather: { windSpeed: 2 } });
+    await engine.unlock();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(requests, 1);
+    assert.equal(engine.getState().failedLayers.length, 1);
+
+    engine.updateWorldState({ weather: { windSpeed: 2 } });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(requests, 1);
+
+    engine.retryFailedLayers();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(requests, 2);
+    assert.equal(failures.length, 2);
     await engine.destroy();
 });
 
@@ -567,5 +690,107 @@ test("streamed scores crossfade and revive an interrupted deck", async () => {
     assert.equal(engine.layers.get("calm-test").stopped, false);
     assert.equal(mediaElements[0].playCount, 2);
     assert.equal(engine.layers.get("melancholic-test").stopped, true);
+    assert.equal(await engine.restartScore(), true);
+    assert.equal(mediaElements[0].currentTime, 0);
+    assert.equal(mediaElements[0].playCount, 3);
+    await engine.destroy();
+});
+
+test("streamed scores honor authored loop windows without rewriting media", async () => {
+    const media = new FakeMediaElement();
+    const engine = new SoundEngine({
+        manifest: [
+            {
+                id: "loop-test",
+                bus: "music",
+                role: "music-calm",
+                src: "/loop.opus",
+                loop: true,
+                loopStart: 1.25,
+                loopEnd: 8.5,
+                stream: true,
+                reactive: true,
+            },
+        ],
+        AudioContextClass: FakeAudioContext,
+        createMediaElement: () => media,
+    });
+    engine.updateWorldState({ moodId: "departure" });
+    await engine.unlock();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(media.loop, false);
+
+    media.currentTime = 8.6;
+    media.ontimeupdate();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(media.currentTime, 1.25);
+    assert.equal(media.playCount, 2);
+    await engine.destroy();
+});
+
+test("rewinding the journey restarts the resolved score from its beginning", async () => {
+    const media = new FakeMediaElement();
+    const engine = new SoundEngine({
+        manifest: [
+            {
+                id: "calm-test",
+                label: "Calm",
+                bus: "music",
+                role: "music-calm",
+                src: "/calm.opus",
+                stream: true,
+                reactive: true,
+                fade: 2,
+            },
+        ],
+        AudioContextClass: FakeAudioContext,
+        createMediaElement: () => media,
+    });
+    engine.updateWorldState({ moodId: "departure", travelTime: 12 });
+    await engine.unlock();
+    await new Promise((resolve) => setImmediate(resolve));
+    media.currentTime = 7;
+
+    engine.updateWorldState({ moodId: "departure", travelTime: 0 });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(media.currentTime, 0);
+    assert.equal(media.playCount, 2);
+    await engine.destroy();
+});
+
+test("score restart waits for a deck that is still starting", async () => {
+    let releaseFirstPlay;
+    const media = new FakeMediaElement();
+    media.play = function () {
+        this.playCount += 1;
+        if (this.playCount === 1)
+            return new Promise((resolve) => {
+                releaseFirstPlay = resolve;
+            });
+        return Promise.resolve();
+    };
+    const engine = new SoundEngine({
+        manifest: [
+            {
+                id: "calm-test",
+                bus: "music",
+                role: "music-calm",
+                src: "/calm.opus",
+                stream: true,
+                reactive: true,
+            },
+        ],
+        AudioContextClass: FakeAudioContext,
+        createMediaElement: () => media,
+    });
+    engine.updateWorldState({ moodId: "departure" });
+    await engine.unlock();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const restart = engine.restartScore();
+    releaseFirstPlay();
+    assert.equal(await restart, true);
+    assert.equal(media.currentTime, 0);
+    assert.equal(media.playCount, 2);
     await engine.destroy();
 });
