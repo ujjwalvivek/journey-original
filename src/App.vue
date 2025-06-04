@@ -79,8 +79,15 @@ const captureDownloadButton = ref(null);
 const soundState = ref("locked");
 const soundMuted = ref(false);
 const soundVolume = ref(0.8);
+const environmentVolume = ref(1);
+const trainVolume = ref(1);
 const musicVolume = ref(1);
 const activeScore = ref("WAITING FOR SOUND");
+const activeSoundLayers = ref([]);
+const failedSoundLayers = ref([]);
+const soundBusMuted = ref({});
+const soundSoloBus = ref("");
+const soundLabOpen = ref(false);
 const soundError = ref("");
 const soundSourceCount = AUDIO_ASSETS.length;
 
@@ -122,7 +129,11 @@ const soundStatusLabel = computed(() => {
     if (soundState.value === "error") return "UNAVAILABLE";
     if (soundState.value === "suspended") return "SUSPENDED";
     if (soundState.value === "ready")
-        return soundMuted.value ? "MUTED" : "READY";
+        return soundMuted.value
+            ? "MUTED"
+            : failedSoundLayers.value.length > 0
+              ? "DEGRADED"
+              : "READY";
     return "OFFLINE";
 });
 const soundActionLabel = computed(() => {
@@ -175,6 +186,42 @@ function onVisibilityChange() {
     soundEngine?.setPageHidden(document.hidden).catch((error) => {
         console.error("Could not change audio visibility state:", error);
     });
+}
+
+function setSoundBusVolume(id, value) {
+    soundEngine?.setBusVolume(id, value);
+    try {
+        window.localStorage.setItem(`journey.${id}Volume`, String(value));
+    } catch {
+        // Mix persistence is optional when storage is restricted.
+    }
+}
+
+function toggleSoundBusMute(id) {
+    if (!soundEngine) return;
+    const muted = soundEngine.setBusMuted(id, !soundBusMuted.value[id]);
+    soundBusMuted.value = { ...soundBusMuted.value, [id]: muted };
+}
+
+function toggleSoundBusSolo(id) {
+    if (!soundEngine) return;
+    soundSoloBus.value = soundEngine.setSoloBus(
+        soundSoloBus.value === id ? "" : id,
+    );
+}
+
+function previewSoundTrigger(trigger) {
+    if (soundState.value === "ready") soundEngine?.previewTrigger(trigger);
+}
+
+async function restartCurrentScore() {
+    if (soundState.value === "ready") await soundEngine?.restartScore();
+}
+
+function retrySoundLayers() {
+    soundError.value = "";
+    failedSoundLayers.value = [];
+    soundEngine?.retryFailedLayers();
 }
 
 function nextMood() {
@@ -495,15 +542,28 @@ function onKeydown(event) {
         )
     )
         return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+    const shortcut = event.key.toLowerCase();
+    const isAssignedShortcut =
+        event.code === "Space" ||
+        shortcut === "m" ||
+        shortcut === "h" ||
+        shortcut === "r" ||
+        event.key === "Escape";
+    if (!isAssignedShortcut) return;
+
+    event.preventDefault();
+    if (event.repeat) return;
+
     if (event.code === "Space") {
-        event.preventDefault();
         toggleTravel();
-    } else if (event.key.toLowerCase() === "m") {
+    } else if (shortcut === "m") {
         nextMood();
-    } else if (event.key.toLowerCase() === "h") {
+    } else if (shortcut === "h") {
         if (hudVisible.value) hideHud();
         else hudVisible.value = true;
-    } else if (event.key.toLowerCase() === "r") {
+    } else if (shortcut === "r") {
         resetJourney();
     } else if (event.key === "Escape") {
         if (fallbackPreview.value && state.value !== "error") {
@@ -540,13 +600,10 @@ watch(soundVolume, (value) => {
     }
 });
 watch(musicVolume, (value) => {
-    soundEngine?.setBusVolume("music", value);
-    try {
-        window.localStorage.setItem("journey.musicVolume", String(value));
-    } catch {
-        // Volume persistence is optional when storage is restricted.
-    }
+    setSoundBusVolume("music", value);
 });
+watch(environmentVolume, (value) => setSoundBusVolume("environment", value));
+watch(trainVolume, (value) => setSoundBusVolume("train", value));
 
 onMounted(async () => {
     try {
@@ -564,6 +621,19 @@ onMounted(async () => {
                     0,
                     Math.min(1, savedMusicVolume),
                 );
+            const savedEnvironmentVolume = Number(
+                window.localStorage.getItem("journey.environmentVolume"),
+            );
+            if (Number.isFinite(savedEnvironmentVolume))
+                environmentVolume.value = Math.max(
+                    0,
+                    Math.min(1, savedEnvironmentVolume),
+                );
+            const savedTrainVolume = Number(
+                window.localStorage.getItem("journey.trainVolume"),
+            );
+            if (Number.isFinite(savedTrainVolume))
+                trainVolume.value = Math.max(0, Math.min(1, savedTrainVolume));
         } catch {
             // Storage can be unavailable in privacy-restricted contexts.
         }
@@ -571,8 +641,13 @@ onMounted(async () => {
             onStateChange(nextState) {
                 soundState.value = nextState;
             },
+            onLayerError({ label, message }) {
+                soundError.value = `${label}: ${message}`;
+            },
         });
         soundEngine.setMasterVolume(soundVolume.value);
+        soundEngine.setBusVolume("environment", environmentVolume.value);
+        soundEngine.setBusVolume("train", trainVolume.value);
         soundEngine.setBusVolume("music", musicVolume.value);
 
         if (!navigator.gpu) {
@@ -645,7 +720,8 @@ onMounted(async () => {
             const stats = renderer?.getStats();
             if (stats) {
                 soundEngine?.updateWorldState(stats);
-                const scores = soundEngine?.getState().activeScores ?? [];
+                const soundSnapshot = soundEngine?.getState();
+                const scores = soundSnapshot?.activeScores ?? [];
                 activeScore.value =
                     scores.length > 0
                         ? scores
@@ -656,6 +732,13 @@ onMounted(async () => {
                         : soundState.value === "ready"
                           ? "NO SCORE"
                           : "WAITING FOR SOUND";
+                activeSoundLayers.value =
+                    soundSnapshot?.layerDetails.filter(
+                        ({ fadingOut }) => !fadingOut,
+                    ) ?? [];
+                failedSoundLayers.value = soundSnapshot?.failedLayers ?? [];
+                soundBusMuted.value = soundSnapshot?.busMuted ?? {};
+                soundSoloBus.value = soundSnapshot?.soloBus ?? "";
             }
         }, 50);
 
@@ -897,7 +980,10 @@ onBeforeUnmount(() => {
                                         }"
                                     />
                                 </label>
-                                <div class="sound-score-readout">
+                                <div
+                                    class="sound-score-readout"
+                                    aria-live="polite"
+                                >
                                     <small>CURRENT SCORE</small>
                                     <strong>{{ activeScore }}</strong>
                                 </div>
@@ -920,9 +1006,103 @@ onBeforeUnmount(() => {
                                         }"
                                     />
                                 </label>
-                                <small v-if="soundError" class="sound-error">
-                                    {{ soundError }}
-                                </small>
+                                <button
+                                    class="sound-lab-toggle"
+                                    type="button"
+                                    :aria-expanded="soundLabOpen"
+                                    @click="soundLabOpen = !soundLabOpen"
+                                >
+                                    <span>MIX / DEBUG</span>
+                                    <strong>{{ soundLabOpen ? "CLOSE" : "OPEN" }}</strong>
+                                </button>
+                                <div v-if="soundLabOpen" class="sound-lab">
+                                    <label class="range-row compact-row">
+                                        <span>Environment
+                                            <output>{{ Math.round(environmentVolume * 100) }}%</output>
+                                        </span>
+                                        <input
+                                            v-model.number="environmentVolume"
+                                            type="range"
+                                            min="0"
+                                            max="1"
+                                            step="0.01"
+                                            :style="{
+                                                '--range-progress': `${environmentVolume * 100}%`,
+                                            }"
+                                        />
+                                    </label>
+                                    <label class="range-row compact-row">
+                                        <span>Train
+                                            <output>{{ Math.round(trainVolume * 100) }}%</output>
+                                        </span>
+                                        <input
+                                            v-model.number="trainVolume"
+                                            type="range"
+                                            min="0"
+                                            max="1"
+                                            step="0.01"
+                                            :style="{
+                                                '--range-progress': `${trainVolume * 100}%`,
+                                            }"
+                                        />
+                                    </label>
+                                    <div
+                                        v-for="bus in ['environment', 'train', 'music']"
+                                        :key="bus"
+                                        class="sound-bus-row"
+                                    >
+                                        <span>{{ bus }}</span>
+                                        <div>
+                                            <button
+                                                type="button"
+                                                :aria-label="`Mute ${bus} bus`"
+                                                :aria-pressed="Boolean(soundBusMuted[bus])"
+                                                @click="toggleSoundBusMute(bus)"
+                                            >M</button>
+                                            <button
+                                                type="button"
+                                                :aria-label="`Solo ${bus} bus`"
+                                                :aria-pressed="soundSoloBus === bus"
+                                                @click="toggleSoundBusSolo(bus)"
+                                            >S</button>
+                                        </div>
+                                    </div>
+                                    <div class="sound-layer-readout">
+                                        <small>ACTIVE LAYERS</small>
+                                        <span v-if="activeSoundLayers.length === 0">NONE</span>
+                                        <span
+                                            v-for="layer in activeSoundLayers.slice(0, 8)"
+                                            :key="`${layer.bus}:${layer.id}`"
+                                        >{{ layer.bus }} / {{ layer.label }}</span>
+                                    </div>
+                                    <div class="sound-debug-actions">
+                                        <button type="button" @click="restartCurrentScore">
+                                            RESTART SCORE
+                                        </button>
+                                        <button type="button" @click="previewSoundTrigger('train-start')">
+                                            DEPARTURE CUE
+                                        </button>
+                                        <button type="button" @click="previewSoundTrigger('train-stop')">
+                                            HALT CUE
+                                        </button>
+                                        <button type="button" @click="previewSoundTrigger('weather-monsoon')">
+                                            STORM CUE
+                                        </button>
+                                    </div>
+                                </div>
+                                <div
+                                    v-if="failedSoundLayers.length > 0"
+                                    class="sound-degraded"
+                                    role="status"
+                                >
+                                    <span>{{ failedSoundLayers.length }} LAYER FAILURE{{ failedSoundLayers.length === 1 ? "" : "S" }}</span>
+                                    <button type="button" @click="retrySoundLayers">RETRY</button>
+                                </div>
+                                <small
+                                    v-if="soundError"
+                                    class="sound-error"
+                                    role="status"
+                                >{{ soundError }}</small>
                             </div>
                             <div class="button-row">
                                 <button type="button" @click="resetJourney">
