@@ -2,52 +2,26 @@
 
 ## Train movement Essentials
 
-Looping layers:
+Looping layers (Avoid audio that already contain prominent rain, crowds, or music)
 
-- [x] Locomotive idle/body rumble
 - [ ] Slow steam/chuff rhythm
 - [ ] Cruising steam/chuff rhythm
-- [x] Slow rail clatter
-- [x] Fast rail clatter
-- [x] Wheel and metal resonance
 - [ ] Interior carriage vibration
-- [x] Bridge-deck rumble while crossing
-
-One-shots:
-
-- [x] Initial departure release
-- [x] Steam release/hiss
-- [x] Brake application
-- [x] Brake release
-- [x] Train settling after stopping
-- [x] Restrained whistle, used rarely
-- [x] Rail-joint impact accents
-
-Avoid recordings that already contain prominent rain, crowds, or music.
 
 ## Wind and open atmosphere
 
-- [x] Gentle open-air wind loop
-- [x] Strong wind loop
-- [ ] Wind passing through bridge cables
-- [x] Low distant atmospheric rumble
-- [ ] Several isolated gust swells
-- [ ] Quiet high-altitude air texture
-- [x] Sheltered calm-air ambience
-
 The engine can blend gentle and strong recordings instead of pitch-shifting one wind file excessively.
 
-## Rain and wet weather
+- [ ] Wind passing through bridge cables
+- [ ] Several isolated gust swells
+- [ ] Quiet high-altitude air texture
+
+## Rain and wet weather (No Thunder)
 
 Looping layers:
 
-- [x] Distant drizzle
 - [ ] Fine nearby rain
 - [ ] Medium rainfall
-- [x] Heavy downpour
-- [x] Rain striking metal
-- [x] Rain striking the train roof
-- [x] Rain striking bridge/deck surfaces
 - [ ] Distant storm wash without thunder
 
 After-rain details:
@@ -57,88 +31,55 @@ After-rain details:
 - [ ] Residual runoff
 - [ ] Damp quiet atmosphere
 
-Keep thunder out for now because lightning and thunder are outside the current weather scope.
-
 ## General environmental beds
 
-- [x] Broad daytime atmospheric bed
+These should be subtle. The train should remain the central physical subject.
+
 - [ ] Dusk atmosphere
-- [x] Quiet night atmosphere
 - [ ] Distant industrial or railway resonance
 - [ ] Very distant settlement/city presence
 - [ ] Empty open-land ambience
 - [ ] Low cloud or overcast tonal atmosphere
 
-These should be subtle. The train should remain the central physical subject.
-
 ## Scene-specific textures
 
 These should suggest mood without literally translating colours into sounds.
 
-### Departure
+1. Departure Scene
+   - [ ] Restrained morning/open-air bed
+   - [ ] Distant departure resonance
+   - [ ] Gentle anticipatory tonal layer
 
-- [ ] Restrained morning/open-air bed
-- [ ] Distant departure resonance
-- [ ] Gentle anticipatory tonal layer
+2. Ember Scene
+   - [ ] Warm low-frequency atmosphere
+   - [ ] Sparse metallic resonance
+   - [ ] Optional subtle crackling texture (no fire)
 
-### Ember
+3. Sakura Scene
+   - [ ] Spacious, gentle tonal bed
 
-- [ ] Warm low-frequency atmosphere
-- [ ] Sparse metallic resonance
-- [ ] Optional subtle crackling texture and only if it does not imply visible fire
+4. Monsoon Scene
+   - [ ] Low storm pressure texture
 
-### Sakura
+5. Blue Hour Scene
+   - [ ] Cool dusk ambience
+   - [ ] Very distant evening life
+   - [ ] Spacious transition tone
 
-- [x] Soft moving-air texture
-- [x] Light delicate environmental detail
-- [ ] Spacious, gentle tonal bed
-
-### Monsoon
-
-- [x] Dense distant rain
-- [x] Close metal/roof rain
-- [x] Strong wind
-- [ ] Low storm pressure texture
-
-### Blue Hour
-
-- [ ] Cool dusk ambience
-- [ ] Very distant evening life
-- [ ] Spacious transition tone
-
-### Night Rail
-
-- [ ] Dark open-air night bed
-- [ ] Distant rail or industrial resonance
-- [ ] Restrained nocturnal details
-- [ ] Low, almost musical drone
+6. Night Rail Scene
+   - [ ] Dark open-air night bed
+   - [ ] Distant rail or industrial resonance
+   - [ ] Restrained nocturnal details
+   - [ ] Low, almost musical drone
 
 ## Music
 
-For the initial engine:
+For the initial engine - Prefer music with clean beginning and ending points, loopable or extendable sections, minimal baked-in ambience, no aggressive mastering, and separate stems when available
 
 - [ ] One main journey composition
-- [x] One darker/weather movement
-- [x] One quiet night movement
-- [x] Short arrival/departure transition
 - [ ] Optional sustained transition stems
 
-Prefer music with:
-
-- Clean beginning and ending points
-- Loopable or extendable sections
-- Minimal baked-in ambience
-- No aggressive mastering
-- Separate stems when available
-
 ## Voice-over
-
-Prototype:
-
-- [ ] One short departure line
-- [ ] One matching transcript
-
-Final narrative set:
 
 - [ ] Opening/departure
 - [ ] Ember passage
@@ -164,3 +105,37 @@ Use sparingly:
 - [ ] Optional drawer opening/closing texture
 
 Ordinary sliders and menu navigation probably should not make sounds.
+
+<!--## Sourced
+
+- [x] Locomotive idle/body rumble (loop)
+- [x] Slow rail clatter (loop)
+- [x] Fast rail clatter (loop)
+- [x] Wheel and metal resonance (loop)
+- [x] Bridge-deck rumble while crossing (loop)
+- [x] Initial departure release (one-shot)
+- [x] Steam release/hiss (one-shot)
+- [x] Brake application (one-shot)
+- [x] Brake release (one-shot)
+- [x] Train settling after stopping (one-shot)
+- [x] Restrained whistle, used rarely (one-shot)
+- [x] Rail-joint impact accents (one-shot)
+- [x] Gentle open-air wind loop
+- [x] Strong wind loop
+- [x] Low distant atmospheric rumble
+- [x] Sheltered calm-air ambience
+- [x] Distant drizzle (loop)
+- [x] Heavy downpour (loop)
+- [x] Rain striking metal (loop)
+- [x] Rain striking the train roof (loop)
+- [x] Rain striking bridge/deck surfaces (loop)
+- [x] Broad daytime atmospheric bed
+- [x] Quiet night atmosphere
+- [x] Soft moving-air texture
+- [x] Light delicate environmental detail
+- [x] Dense distant rain
+- [x] Close metal/roof rain
+- [x] Strong wind
+- [x] One darker/weather movement
+- [x] One quiet night movement
+- [x] Short arrival/departure transition-->
