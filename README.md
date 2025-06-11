@@ -40,7 +40,19 @@ A WebGPU and WGSL diorama built around movement, atmosphere, and directed change
 - Temporal feedback amount and Vignette strength.
 - Reset journey and feedback history.
 - Paused Polaroid-style capture review with a clean PNG download and seamless return to the journey.
-- An opt-in Web Audio engine with independent Environment, Train, Music, and Voice buses; scene-aware recorded ambience; dual-deck streamed scores with interruption-safe crossfades; reactive train, wind, and layered-rain sources; atmospheric filtering and restrained directional stereo; grouped journey/weather cues with ambience/music ducking; smooth automation; on-demand loading; and browser/capture lifecycle handling.
+- An opt-in Web Audio engine with:
+  - authored scene profiles
+  - independent Environment, Train, Music, and reserved Voice buses
+  - scene-aware recorded ambience
+  - dual-deck streamed scores with interruption-safe crossfades
+  - reactive train, wind, and layered-rain sources
+  - atmospheric filtering and restrained directional stereo
+  - cooldown-safe journey/weather cues with audible-level-aware ducking
+  - gentler master dynamics
+  - on-demand loading
+  - failure quarantine and retry
+  - browser/capture lifecycle handling
+  - a compact mix/debug lab
 - Collapsible side-panel HUD with keyboard shortcuts and hover recovery when hidden.
 - A deliberately reduced Canvas 2D platform notice when WebGPU is unavailable.
 
