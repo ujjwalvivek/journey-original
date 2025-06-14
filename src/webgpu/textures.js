@@ -25,7 +25,10 @@ export async function loadExactNoiseTexture(device) {
         label: "exact-noise",
         size: [bitmap.width, bitmap.height, 1],
         format: "rgba8unorm",
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+        usage:
+            GPUTextureUsage.TEXTURE_BINDING |
+            GPUTextureUsage.COPY_DST |
+            GPUTextureUsage.RENDER_ATTACHMENT,
     });
 
     // Buffer A iChannel0 on the original Shadertoy is configured VFlip ON.

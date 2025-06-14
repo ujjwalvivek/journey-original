@@ -68,8 +68,16 @@ function cloudField(x, y) {
 }
 
 function buildWeatherLayer(canvas, width, height, drift) {
-    const pixelWidth = Math.max(160, Math.min(320, Math.round(width / 6)));
-    const pixelHeight = Math.max(90, Math.round((pixelWidth * height) / width));
+    const safeWidth = Math.max(1, Number.isFinite(width) ? width : 1);
+    const safeHeight = Math.max(1, Number.isFinite(height) ? height : 1);
+    const pixelWidth = Math.max(
+        160,
+        Math.min(320, Math.round(safeWidth / 6)),
+    );
+    const pixelHeight = Math.max(
+        90,
+        Math.min(320, Math.round((pixelWidth * safeHeight) / safeWidth)),
+    );
     if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
         canvas.width = pixelWidth;
         canvas.height = pixelHeight;
@@ -205,8 +213,16 @@ function drawWheel(ctx, x, y, radius, rotation) {
 }
 
 function buildForegroundLayer(canvas, width, height, drift) {
-    const pixelWidth = Math.max(160, Math.min(320, Math.round(width / 6)));
-    const pixelHeight = Math.max(90, Math.round((pixelWidth * height) / width));
+    const safeWidth = Math.max(1, Number.isFinite(width) ? width : 1);
+    const safeHeight = Math.max(1, Number.isFinite(height) ? height : 1);
+    const pixelWidth = Math.max(
+        160,
+        Math.min(320, Math.round(safeWidth / 6)),
+    );
+    const pixelHeight = Math.max(
+        90,
+        Math.min(320, Math.round((pixelWidth * safeHeight) / safeWidth)),
+    );
     if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
         canvas.width = pixelWidth;
         canvas.height = pixelHeight;
@@ -417,8 +433,8 @@ export function mountCanvasFallback(canvas) {
         if (destroyed) return;
         if (originTime === null) originTime = time;
         const elapsed = time - originTime;
-        const width = canvas.clientWidth;
-        const height = canvas.clientHeight;
+        const width = Math.max(1, canvas.clientWidth);
+        const height = Math.max(1, canvas.clientHeight);
         const weatherFrame = Math.floor(elapsed / (1000 / 60));
         if (weatherFrame !== lastWeatherFrame) {
             buildWeatherLayer(
