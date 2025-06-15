@@ -17,7 +17,7 @@ import { WeatherFront } from "../weather/weatherFront.js";
 import { advanceSimulationClocks } from "../weather/weatherSimulation.js";
 
 const BUFFER_FORMAT = "rgba16float";
-const UNIFORM_FLOATS = 116;
+const UNIFORM_FLOATS = 120;
 const UNIFORM_BYTES = UNIFORM_FLOATS * 4;
 
 export class JourneyRenderer {
@@ -82,6 +82,12 @@ export class JourneyRenderer {
             frame: [0, 0, 0, 0],
             onStarted: null,
             onComplete: null,
+        };
+        this.showcaseTitle = {
+            active: false,
+            progress: 0,
+            startedAt: null,
+            duration: 3.45,
         };
 
         this.frameHandle = 0;
@@ -328,7 +334,10 @@ export class JourneyRenderer {
             label: "capture-still",
             size: [imageBitmap.width, imageBitmap.height, 1],
             format: "rgba8unorm",
-            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+            usage:
+                GPUTextureUsage.TEXTURE_BINDING |
+                GPUTextureUsage.COPY_DST |
+                GPUTextureUsage.RENDER_ATTACHMENT,
         });
         this.device.queue.copyExternalImageToTexture(
             { source: imageBitmap },
@@ -359,6 +368,19 @@ export class JourneyRenderer {
             onStarted,
             onComplete,
         };
+    }
+
+    beginShowcaseTitle(duration = 3.45) {
+        this.showcaseTitle = {
+            active: true,
+            progress: 0,
+            startedAt: null,
+            duration: Math.max(0.1, Number(duration) || 3.45),
+        };
+    }
+
+    restartOpening() {
+        this.sceneAge = 0;
     }
 
     clearFeedback() {
@@ -690,6 +712,10 @@ export class JourneyRenderer {
         this.uniformData[113] = this.captureTransition.active ? 1 : 0;
         this.uniformData[114] = 0.075;
         this.uniformData[115] = 0.88;
+        this.uniformData[116] = this.showcaseTitle.progress;
+        this.uniformData[117] = this.showcaseTitle.active ? 1 : 0;
+        this.uniformData[118] = 0;
+        this.uniformData[119] = 0;
 
         this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
     }
@@ -773,6 +799,18 @@ export class JourneyRenderer {
                 ),
             );
         }
+        if (this.showcaseTitle.active) {
+            if (this.showcaseTitle.startedAt === null)
+                this.showcaseTitle.startedAt = nowSeconds;
+            this.showcaseTitle.progress = Math.min(
+                1,
+                Math.max(
+                    0,
+                    (nowSeconds - this.showcaseTitle.startedAt) /
+                        this.showcaseTitle.duration,
+                ),
+            );
+        }
         this.writeUniforms(mood);
 
         const writeIndex = 1 - this.readIndex;
@@ -828,6 +866,8 @@ export class JourneyRenderer {
             this.captureTransition.onComplete = null;
             onComplete?.();
         }
+        if (this.showcaseTitle.active && this.showcaseTitle.progress >= 1)
+            this.showcaseTitle.active = false;
         this.frameHandle = requestAnimationFrame(this.render);
     }
 }
