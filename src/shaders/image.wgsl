@@ -30,6 +30,7 @@ struct Uniforms {
   captureRect: vec4f, // normalized x, y, width, height
   captureFrame: vec4f, // normalized x padding, y padding, footer, rotation
   captureTransition: vec4f, // progress, active, dissolve softness, backdrop
+  showcaseTitle: vec4f, // progress, active, reserved, reserved
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -100,6 +101,12 @@ fn rectangleMask(point: vec2f, size: vec2f, feather: f32) -> f32 {
     min(point.y, size.y - point.y)
   );
   return smoothstep(0.0, feather, edgeDistance);
+}
+
+fn titleEaseOutBack(tIn: f32) -> f32 {
+  let t = clamp(tIn, 0.0, 1.0) - 1.0;
+  let overshoot = 1.70158;
+  return 1.0 + (overshoot + 1.0) * t * t * t + overshoot * t * t;
 }
 
 @fragment
@@ -181,6 +188,35 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
     let paperColor = vec3f(0.965, 0.941, 0.902);
     let frameOpacity = pow(baseOpacity, 1.35);
     col = mix(col, paperColor, frameMask * frameOpacity);
+  }
+
+  if (uniforms.showcaseTitle.y > 0.5) {
+    let progress = clamp(uniforms.showcaseTitle.x, 0.0, 1.0);
+    let arrival = titleEaseOutBack(smoothstep(0.0, 0.48, progress));
+    let snappedCenter = mix(1.34, 0.5, arrival);
+    let exitBase = smoothstep(0.53, 1.0, progress);
+    let exitMotion = exitBase * exitBase * (3.0 - 2.0 * exitBase);
+    let titleCenter = vec2f(mix(snappedCenter, -0.36, exitMotion), 0.36);
+    let titleDimensions = vec2f(textureDimensions(captureTexture));
+    let titleAspect = titleDimensions.x / max(titleDimensions.y, 1.0);
+    let titleWidth = 0.58;
+    let titleSize = vec2f(
+      titleWidth,
+      titleWidth * uniforms.resolution.x /
+        max(uniforms.resolution.y * titleAspect, 1.0)
+    );
+    let titleUv = (uv - titleCenter) / titleSize + vec2f(0.5);
+    let titleInside = step(vec2f(0.0), titleUv) * step(titleUv, vec2f(1.0));
+    let titleSample = textureSampleLevel(
+      captureTexture,
+      sourceSampler,
+      clamp(titleUv, vec2f(0.0), vec2f(1.0)),
+      0.0
+    );
+    let titleFade = smoothstep(0.0, 0.08, progress) *
+      (1.0 - smoothstep(0.9, 1.0, progress));
+    let titleMask = titleInside.x * titleInside.y * titleSample.a * titleFade;
+    col = mix(col, titleSample.rgb, titleMask);
   }
   return vec4f(col, 1.0);
 }
