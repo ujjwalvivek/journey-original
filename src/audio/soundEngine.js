@@ -111,6 +111,7 @@ export class SoundEngine {
         this.layers = new Map();
         this.pendingLayers = new Map();
         this.failedAssets = new Map();
+        this.recordingOutputs = new Set();
         this.lastTriggerAt = new Map();
         this.manualAuditionToken = 0;
         this.layerInstance = 0;
@@ -241,6 +242,32 @@ export class SoundEngine {
         this.muted = Boolean(muted);
         this.applyMasterGain();
         return this.muted;
+    }
+
+    createRecordingOutput() {
+        if (this.state !== "ready" || !this.context || !this.compressor)
+            throw new Error("Enable the Sound Engine before recording.");
+        if (!this.context.createMediaStreamDestination)
+            throw new Error("Audio stream recording is unavailable in this browser.");
+
+        const destination = this.context.createMediaStreamDestination();
+        this.compressor.connect(destination);
+        let released = false;
+        const output = {
+            stream: destination.stream,
+            release: () => {
+                if (released) return;
+                released = true;
+                try {
+                    this.compressor?.disconnect(destination);
+                } catch {
+                    // The graph may already be disconnected during teardown.
+                }
+                this.recordingOutputs.delete(output);
+            },
+        };
+        this.recordingOutputs.add(output);
+        return output;
     }
 
     setBusVolume(id, value) {
@@ -979,6 +1006,7 @@ export class SoundEngine {
         this.ambienceCueEnvelope = null;
         this.pendingLayers.clear();
         this.failedAssets.clear();
+        for (const output of [...this.recordingOutputs]) output.release();
         this.lastTriggerAt.clear();
         this.manualAuditionToken += 1;
         for (const { stateGain, volumeGain, filter } of this.buses.values()) {
