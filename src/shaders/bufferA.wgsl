@@ -27,6 +27,7 @@ struct Uniforms {
   weatherTimes: vec4f, // x weather, y precipitation, z gust, w mist
   weatherSurface: vec4f, // x light scatter, y drying rate, z rain quality, w smoke age
   weatherDetail: vec4f, // x desaturation, y rain depth, z rain contrast, w foreground rain
+  showcaseTitle: vec4f,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -167,6 +168,27 @@ fn wheelMotionMask(pointIn: vec2f, radius: f32, angle: f32) -> f32 {
     (1.0 - smoothstep(radius * 0.55, radius * 0.68, radial));
   let hub = 1.0 - smoothstep(radius * 0.09, radius * 0.2, radial);
   return clamp((spokes * spokeReach + hub * 0.42) * inside, 0.0, 1.0);
+}
+
+// Keep the authored wheel boundary unchanged while giving it a stable,
+// one-pixel coverage ramp. Derivatives are intentionally avoided because
+// wagon wheels are evaluated from non-uniform fragment control flow.
+fn wheelSilhouetteMask(
+  point: vec2f,
+  radiusSquared: f32,
+  coordinateUnitsPerPixel: f32
+) -> f32 {
+  let distanceSquared = dot(point, point);
+  let radius = sqrt(radiusSquared);
+  let halfPixelFootprint = max(
+    radius * coordinateUnitsPerPixel,
+    coordinateUnitsPerPixel * coordinateUnitsPerPixel * 0.5
+  );
+  return 1.0 - smoothstep(
+    radiusSquared - halfPixelFootprint,
+    radiusSquared + halfPixelFootprint,
+    distanceSquared
+  );
 }
 
 fn livingGust(uv: vec2f) -> f32 {
@@ -472,18 +494,39 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let chem2 = boxMask(trainUv, 0.488, 0.496, 0.12, 0.123);
   let locoRoof = boxMask(trainUv, 0.443, 0.47, 0.11, 0.117);
 
-  var wheel = 1.0 - step(0.000023, dot(trainUv - vec2f(0.457, 0.1055), trainUv - vec2f(0.457, 0.1055)));
-  wheel += 1.0 - step(0.00002, dot(trainUv - vec2f(0.487, 0.105), trainUv - vec2f(0.487, 0.105)));
-  wheel += 1.0 - step(0.00002, dot(trainUv - vec2f(0.497, 0.105), trainUv - vec2f(0.497, 0.105)));
-
+  let sceneUnitsPerPixel = 1.0 / max(uniforms.resolution.y, 1.0);
+  var wheel = wheelSilhouetteMask(
+    trainUv - vec2f(0.457, 0.1055),
+    0.000023,
+    sceneUnitsPerPixel
+  );
+  wheel += wheelSilhouetteMask(
+    trainUv - vec2f(0.487, 0.105),
+    0.00002,
+    sceneUnitsPerPixel
+  );
+  wheel += wheelSilhouetteMask(
+    trainUv - vec2f(0.497, 0.105),
+    0.00002,
+    sceneUnitsPerPixel
+  );
   let wheelAngle = travelT * 2.7;
   var wheelMotion = wheelMotionMask(trainUv - vec2f(0.457, 0.1055), 0.0048, wheelAngle);
   wheelMotion += wheelMotionMask(trainUv - vec2f(0.487, 0.105), 0.0045, wheelAngle);
   wheelMotion += wheelMotionMask(trainUv - vec2f(0.497, 0.105), 0.0045, wheelAngle);
 
   if (trainUv.x < 0.45 && trainUv.y > 0.025 && trainUv.y < 0.2) {
-    wheel += 1.0 - step(0.002, dot(uv2 - vec2f(0.2, 0.95), uv2 - vec2f(0.2, 0.95)));
-    wheel += 1.0 - step(0.002, dot(uv2 - vec2f(0.8, 0.95), uv2 - vec2f(0.8, 0.95)));
+    let wagonUnitsPerPixel = sceneUnitsPerPixel * 9.0;
+    wheel += wheelSilhouetteMask(
+      uv2 - vec2f(0.2, 0.95),
+      0.002,
+      wagonUnitsPerPixel
+    );
+    wheel += wheelSilhouetteMask(
+      uv2 - vec2f(0.8, 0.95),
+      0.002,
+      wagonUnitsPerPixel
+    );
     wheelMotion += wheelMotionMask(uv2 - vec2f(0.2, 0.95), 0.0447, wheelAngle);
     wheelMotion += wheelMotionMask(uv2 - vec2f(0.8, 0.95), 0.0447, wheelAngle);
   }
