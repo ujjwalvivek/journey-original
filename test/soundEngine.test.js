@@ -168,6 +168,14 @@ class FakeAudioContext {
         return new FakeNode();
     }
 
+    createMediaStreamDestination() {
+        return {
+            stream: {
+                getAudioTracks: () => [{ kind: "audio" }],
+            },
+        };
+    }
+
     async decodeAudioData(bytes) {
         return { byteLength: bytes.byteLength };
     }
@@ -296,6 +304,12 @@ test("Sound Engine unlocks lazily and starts manifest layers", async () => {
     assert.equal(engine.buses.get("environment").volumeGain.gain.value, 0);
     assert.equal(engine.buses.get("train").volumeGain.gain.value, 1);
     engine.setSoloBus("");
+
+    const recordingOutput = engine.createRecordingOutput();
+    assert.equal(recordingOutput.stream.getAudioTracks().length, 1);
+    assert.equal(engine.recordingOutputs.size, 1);
+    recordingOutput.release();
+    assert.equal(engine.recordingOutputs.size, 0);
 
     engine.updateWorldState({ travelRunning: false, travelSpeed: 1 });
     assert.equal(engine.getState().resolved.layers.rail, 0);
