@@ -18,6 +18,11 @@ import {
 import { WEATHER_FRONTS } from "./weather/weatherFront.js";
 import { SoundEngine } from "./audio/soundEngine.js";
 import { AUDIO_ASSETS } from "./audio/audioManifest.js";
+import { ShowcaseRecorder } from "./showcase/showcaseRecorder.js";
+import {
+    runShowcaseSequence,
+    SHOWCASE_DURATION,
+} from "./showcase/showcaseSequence.js";
 
 const MOOD_ONLY_CONTROLS = AUTHORING_CONTROLS.filter(
     ({ key }) => !LEGACY_WEATHER_KEYS.includes(key),
@@ -90,12 +95,22 @@ const soundSoloBus = ref("");
 const soundLabOpen = ref(false);
 const soundError = ref("");
 const soundSourceCount = AUDIO_ASSETS.length;
+const showcaseState = ref("idle");
+const showcaseProgress = ref(0);
+const showcaseElapsed = ref(0);
+const showcaseScene = ref("departure");
+const showcaseCodec = ref("WEBM");
+const showcaseError = ref("");
 
 let renderer = null;
 let soundEngine = null;
 let statsTimer = 0;
 let soundTimer = 0;
 let destroyFallback = null;
+let showcaseRecorder = null;
+let showcaseAudioOutput = null;
+let showcaseAbortController = null;
+let showcasePreviousState = null;
 
 const travelLabel = computed(() =>
     travelRunning.value ? "STOP TRAIN" : "START TRAIN",
@@ -124,6 +139,7 @@ const selectedWeatherFrontName = computed(
         "-",
 );
 const captureActive = computed(() => capturePhase.value !== "idle");
+const showcaseActive = computed(() => showcaseState.value !== "idle");
 const soundStatusLabel = computed(() => {
     if (soundState.value === "starting") return "STARTING";
     if (soundState.value === "error") return "UNAVAILABLE";
@@ -216,6 +232,200 @@ function previewSoundTrigger(trigger) {
 
 async function restartCurrentScore() {
     if (soundState.value === "ready") await soundEngine?.restartScore();
+}
+
+function downloadShowcase(blob) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `journey-showcase-${Date.now()}.webm`;
+    link.hidden = true;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function restoreAfterShowcase() {
+    const previous = showcasePreviousState;
+    showcasePreviousState = null;
+    if (!previous) return;
+
+    hudVisible.value = previous.hudVisible;
+    railCanReveal.value = previous.railCanReveal;
+    activePanel.value = previous.activePanel;
+    travelSpeed.value = previous.travelSpeed;
+    travelRunning.value = previous.travelRunning;
+    moodId.value = previous.moodId;
+    weatherId.value = previous.weatherId;
+    weatherFrontId.value = previous.weatherFrontId;
+    weatherFrontEnabled.value = previous.weatherFrontEnabled;
+    autoMood.value = previous.autoMood;
+    renderer?.setTravelSpeed(previous.travelSpeed);
+    renderer?.setTravelRunning(previous.travelRunning);
+    renderer?.setMood(previous.moodId);
+    renderer?.setWeather(previous.weatherId);
+    renderer?.setWeatherFront(previous.weatherFrontId);
+    renderer?.setWeatherFrontEnabled(previous.weatherFrontEnabled);
+    renderer?.setAutoMood(previous.autoMood);
+    if (soundEngine)
+        soundMuted.value = soundEngine.setMuted(previous.soundMuted);
+}
+
+function releaseShowcaseResources() {
+    showcaseAudioOutput?.release();
+    showcaseAudioOutput = null;
+    showcaseRecorder = null;
+    showcaseAbortController = null;
+}
+
+async function createShowcaseTitleBitmap() {
+    await document.fonts?.ready?.catch?.(() => {});
+    const titleCanvas = document.createElement("canvas");
+    titleCanvas.width = 1600;
+    titleCanvas.height = 900;
+    const context = titleCanvas.getContext("2d");
+    if (!context) throw new Error("Could not prepare the showcase title.");
+
+    context.clearRect(0, 0, titleCanvas.width, titleCanvas.height);
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillStyle = "#fff0e4";
+    context.shadowColor = "rgba(28, 10, 7, 0.5)";
+    context.shadowBlur = 22;
+    context.shadowOffsetY = 9;
+    context.font = '600 180px "IBM Plex Mono", monospace';
+    context.fillText("THE", titleCanvas.width / 2, 300);
+    context.font = '600 255px "IBM Plex Mono", monospace';
+    context.fillText("JOURNEY", titleCanvas.width / 2, 555);
+    return createImageBitmap(titleCanvas);
+}
+
+async function startShowcaseRecording() {
+    if (
+        showcaseActive.value ||
+        captureActive.value ||
+        state.value !== "ready" ||
+        !renderer ||
+        !soundEngine
+    )
+        return;
+
+    showcasePreviousState = {
+        hudVisible: hudVisible.value,
+        railCanReveal: railCanReveal.value,
+        activePanel: activePanel.value,
+        travelRunning: travelRunning.value,
+        travelSpeed: travelSpeed.value,
+        moodId: moodId.value,
+        weatherId: weatherId.value,
+        weatherFrontId: weatherFrontId.value,
+        weatherFrontEnabled: weatherFrontEnabled.value,
+        autoMood: autoMood.value,
+        soundMuted: soundMuted.value,
+    };
+    showcaseState.value = "preparing";
+    showcaseProgress.value = 0;
+    showcaseElapsed.value = 0;
+    showcaseScene.value = "departure";
+    showcaseCodec.value = "WEBM";
+    showcaseError.value = "";
+    showcaseAbortController = new AbortController();
+
+    try {
+        await soundEngine.unlock();
+        if (showcaseAbortController.signal.aborted)
+            throw new DOMException("Showcase recording cancelled.", "AbortError");
+        soundMuted.value = soundEngine.setMuted(false);
+        showcaseAudioOutput = soundEngine.createRecordingOutput();
+
+        const titleBitmap = await createShowcaseTitleBitmap();
+        renderer.setCaptureImage(titleBitmap);
+        titleBitmap.close?.();
+
+        autoMood.value = false;
+        renderer.setAutoMood(false);
+        weatherFrontEnabled.value = false;
+        renderer.setWeatherFrontEnabled(false);
+        weatherId.value = "scene";
+        renderer.setWeather("scene");
+        hudVisible.value = false;
+        railCanReveal.value = false;
+        activePanel.value = null;
+        travelSpeed.value = 1;
+        travelRunning.value = true;
+        renderer.setTravelSpeed(1);
+        renderer.setTravelRunning(true);
+        renderer.resetJourney();
+
+        showcaseRecorder = new ShowcaseRecorder(canvas.value, {
+            audioStream: showcaseAudioOutput.stream,
+        });
+        showcaseCodec.value = showcaseRecorder.mimeType.includes("vp8")
+            ? "VP8 / OPUS"
+            : showcaseRecorder.mimeType.includes("vp9")
+              ? "VP9 / OPUS"
+              : "WEBM";
+        showcaseRecorder.start();
+        showcaseState.value = "recording";
+        renderer.restartOpening();
+        renderer.beginShowcaseTitle(3.45);
+
+        let lastProgressUpdate = -1;
+        let closingTitlePlayed = false;
+
+        await runShowcaseSequence({
+            signal: showcaseAbortController.signal,
+            applyScene(scene) {
+                showcaseScene.value = scene.id;
+                moodId.value = scene.id;
+                renderer?.setMood(scene.id);
+            },
+            onProgress({ scene, index, sceneElapsed, elapsed, progress }) {
+                if (
+                    !closingTitlePlayed &&
+                    scene.id === "departure" &&
+                    index > 0 &&
+                    sceneElapsed >= 8
+                ) {
+                    closingTitlePlayed = true;
+                    renderer?.beginShowcaseTitle(3.45);
+                }
+                if (progress < 1 && elapsed - lastProgressUpdate < 0.1) return;
+                lastProgressUpdate = elapsed;
+                showcaseElapsed.value = elapsed;
+                showcaseProgress.value = progress;
+            },
+        });
+
+        showcaseState.value = "finishing";
+        const blob = await showcaseRecorder.stop();
+        downloadShowcase(blob);
+    } catch (error) {
+        if (error?.name === "AbortError") {
+            showcaseState.value = "cancelling";
+            await showcaseRecorder?.cancel();
+        } else {
+            console.error("Could not record showcase:", error);
+            showcaseError.value =
+                error instanceof Error ? error.message : String(error);
+            await showcaseRecorder?.cancel().catch(() => {});
+        }
+    } finally {
+        releaseShowcaseResources();
+        restoreAfterShowcase();
+        showcaseState.value = "idle";
+    }
+}
+
+function cancelShowcaseRecording() {
+    showcaseAbortController?.abort();
+}
+
+function toggleShowcaseHud() {
+    hudVisible.value = !hudVisible.value;
+    railCanReveal.value = false;
+    if (!hudVisible.value) activePanel.value = null;
 }
 
 function retrySoundLayers() {
@@ -528,6 +738,13 @@ async function copyMoodState() {
 }
 
 function onKeydown(event) {
+    if (showcaseActive.value) {
+        if (event.key === "Escape") {
+            event.preventDefault();
+            cancelShowcaseRecording();
+        }
+        return;
+    }
     if (captureActive.value) {
         if (event.key === "Escape" && capturePhase.value === "review") {
             event.preventDefault();
@@ -608,32 +825,17 @@ watch(trainVolume, (value) => setSoundBusVolume("train", value));
 onMounted(async () => {
     try {
         try {
-            const savedVolume = Number(
-                window.localStorage.getItem("journey.soundVolume"),
-            );
-            if (Number.isFinite(savedVolume))
-                soundVolume.value = Math.max(0, Math.min(1, savedVolume));
-            const savedMusicVolume = Number(
-                window.localStorage.getItem("journey.musicVolume"),
-            );
-            if (Number.isFinite(savedMusicVolume))
-                musicVolume.value = Math.max(
-                    0,
-                    Math.min(1, savedMusicVolume),
-                );
-            const savedEnvironmentVolume = Number(
-                window.localStorage.getItem("journey.environmentVolume"),
-            );
-            if (Number.isFinite(savedEnvironmentVolume))
-                environmentVolume.value = Math.max(
-                    0,
-                    Math.min(1, savedEnvironmentVolume),
-                );
-            const savedTrainVolume = Number(
-                window.localStorage.getItem("journey.trainVolume"),
-            );
-            if (Number.isFinite(savedTrainVolume))
-                trainVolume.value = Math.max(0, Math.min(1, savedTrainVolume));
+            const restoreVolume = (key, target) => {
+                const stored = window.localStorage.getItem(key);
+                if (stored === null) return;
+                const value = Number(stored);
+                if (Number.isFinite(value))
+                    target.value = Math.max(0, Math.min(1, value));
+            };
+            restoreVolume("journey.soundVolume", soundVolume);
+            restoreVolume("journey.musicVolume", musicVolume);
+            restoreVolume("journey.environmentVolume", environmentVolume);
+            restoreVolume("journey.trainVolume", trainVolume);
         } catch {
             // Storage can be unavailable in privacy-restricted contexts.
         }
@@ -675,6 +877,10 @@ onMounted(async () => {
         renderer.setAutoMood(autoMood.value);
         renderer.setFeedbackAmount(feedbackAmount.value);
         renderer.setVignetteStrength(vignetteStrength.value);
+        const openingTitleBitmap = await createShowcaseTitleBitmap();
+        renderer.setCaptureImage(openingTitleBitmap);
+        openingTitleBitmap.close?.();
+        renderer.beginShowcaseTitle(3.45);
         renderer.startRenderer();
         state.value = "ready";
 
@@ -752,6 +958,9 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+    showcaseAbortController?.abort();
+    showcaseRecorder?.cancel().catch(() => {});
+    releaseShowcaseResources();
     window.clearInterval(statsTimer);
     window.clearInterval(soundTimer);
     window.removeEventListener("keydown", onKeydown);
@@ -775,6 +984,7 @@ onBeforeUnmount(() => {
                     'hud-hidden': !hudVisible,
                     'rail-can-reveal': railCanReveal,
                 }"
+                :inert="showcaseActive"
                 aria-label="Journey interface"
             >
                 <nav
@@ -1117,6 +1327,20 @@ onBeforeUnmount(() => {
                                     {{ capturePhase === "capturing" ? "CAPTURING" : "CAPTURE PNG" }}
                                 </button>
                             </div>
+                            <button
+                                class="showcase-launch"
+                                type="button"
+                                :disabled="showcaseActive || captureActive"
+                                @click="startShowcaseRecording"
+                            >
+                                <span>AUTHOR CAPTURE</span>
+                                <strong>RECORD {{ SHOWCASE_DURATION }}s SHOWCASE</strong>
+                            </button>
+                            <small
+                                v-if="showcaseError"
+                                class="sound-error"
+                                role="status"
+                            >{{ showcaseError }}</small>
                         </section>
 
                         <section
@@ -1583,6 +1807,37 @@ onBeforeUnmount(() => {
                 </Transition>
             </section>
         </template>
+
+        <section
+            v-if="showcaseActive"
+            class="showcase-recorder"
+            aria-label="Showcase recording controls"
+            aria-live="polite"
+        >
+            <div class="showcase-recorder-heading">
+                <span><i></i>{{ showcaseState }}</span>
+                <strong>{{ showcaseScene.replaceAll("-", " ") }}</strong>
+            </div>
+            <div class="showcase-recorder-time">
+                <time>{{ showcaseElapsed.toFixed(1) }}s</time>
+                <span>{{ renderSize }} · {{ fps || "-" }} FPS</span>
+                <time>{{ SHOWCASE_DURATION }}s</time>
+            </div>
+            <small class="showcase-recorder-codec">
+                NATIVE · 30 FPS · {{ showcaseCodec }}
+            </small>
+            <i class="showcase-recorder-progress">
+                <b :style="{ transform: `scaleX(${showcaseProgress})` }"></b>
+            </i>
+            <div class="showcase-recorder-actions">
+                <button type="button" @click="toggleShowcaseHud">
+                    {{ hudVisible ? "HIDE HUD" : "SHOW HUD" }}
+                </button>
+                <button type="button" @click="cancelShowcaseRecording">
+                    CANCEL RECORDING
+                </button>
+            </div>
+        </section>
 
         <section
             v-if="captureUrl"
