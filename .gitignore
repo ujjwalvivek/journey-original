@@ -7,3 +7,4 @@ reference/
 tools/wgsl-validator/target/
 *.lock
 media/audio/*.opus
+media/video/
