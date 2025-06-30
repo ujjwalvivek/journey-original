@@ -40,6 +40,7 @@ A WebGPU and WGSL diorama built around movement, atmosphere, and directed change
 - Temporal feedback amount and Vignette strength.
 - Reset journey and feedback history.
 - Paused Polaroid-style capture review with a clean PNG download and seamless return to the journey.
+- An integrated showcase recorder with a GPU-rendered opening title, Departure → Monsoon → Sakura → Departure sequencing, a closing title reprise for loop edits, and native-canvas 30 FPS export with the final Sound Engine mix.
 - An opt-in Web Audio engine with:
   - authored scene profiles
   - independent Environment, Train, Music, and reserved Voice buses
