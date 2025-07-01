@@ -8,3 +8,4 @@ tools/wgsl-validator/target/
 *.lock
 media/audio/*.opus
 media/video/
+media/*-old.gif
