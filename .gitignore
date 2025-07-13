@@ -9,3 +9,4 @@ tools/wgsl-validator/target/
 media/audio/*.opus
 media/video/
 media/*-old.gif
+media/*.pdf
