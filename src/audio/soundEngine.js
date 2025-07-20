@@ -126,6 +126,15 @@ export class SoundEngine {
         this.soloBus = "";
         this.presentationPaused = false;
         this.ambienceCueEnvelope = null;
+        this.narrationPlayback = null;
+        this.lastNarrationAsset = null;
+        this.narrationDuckActive = false;
+        this.narrationPausedForVisibility = false;
+        this.narrationStatus = Object.freeze({
+            state: "idle",
+            id: "",
+            title: "",
+        });
         this.hasWorldState = false;
         this.lastSnapshot = {};
         this.resolved = resolveSoundState(this.lastSnapshot, {
@@ -395,11 +404,15 @@ export class SoundEngine {
         this.applyMasterGain(duration);
         for (const [id, target] of Object.entries(this.resolved.buses)) {
             const bus = this.buses.get(id);
+            const narrationFloor =
+                this.narrationDuckActive && id !== "voice"
+                    ? (this.narrationPlayback?.asset.ducking?.[id] ?? 1)
+                    : 1;
             if (bus)
                 rampAudioParam(
                     this.context,
                     bus.stateGain.gain,
-                    target,
+                    target * narrationFloor,
                     duration,
                 );
         }
@@ -756,6 +769,198 @@ export class SoundEngine {
         }
     }
 
+    async playNarration(asset) {
+        if (this.state !== "ready" || !this.context)
+            throw new Error("Enable the Sound Engine before playing narration.");
+        const selected = selectPlayableSource(asset?.sources, this.canPlayType);
+        const media = this.createMediaElement?.();
+        if (!selected || !media)
+            throw new Error(`Streaming narration is unavailable for ${asset?.id}.`);
+
+        this.stopNarration({ fade: 0 });
+        this.lastNarrationAsset = asset;
+        media.src = selected.src;
+        media.preload = "auto";
+        media.playsInline = true;
+        const source = this.context.createMediaElementSource(media);
+        const gain = this.context.createGain();
+        gain.gain.setValueAtTime(0, this.context.currentTime);
+        source.connect(gain);
+        gain.connect(this.buses.get("voice").stateGain);
+
+        const playback = {
+            asset,
+            media,
+            source,
+            gain,
+            state: "playing",
+            pauseTimer: 0,
+            stopTimer: 0,
+        };
+        this.narrationPlayback = playback;
+        this.narrationStatus = Object.freeze({
+            state: "playing",
+            id: asset.id,
+            title: asset.title,
+        });
+        media.onended = () => this.finishNarration(playback, "completed");
+
+        try {
+            await media.play();
+        } catch (error) {
+            this.finishNarration(playback, "idle");
+            throw error;
+        }
+        if (this.narrationPlayback !== playback) return false;
+        this.narrationDuckActive = true;
+        this.applyMix(Math.max(0.08, asset.fadeIn));
+        rampAudioParam(
+            this.context,
+            gain.gain,
+            asset.gain,
+            asset.fadeIn,
+        );
+        return true;
+    }
+
+    pauseNarration() {
+        const playback = this.narrationPlayback;
+        if (!playback || playback.state !== "playing") return false;
+        playback.state = "paused";
+        this.narrationStatus = Object.freeze({
+            state: "paused",
+            id: playback.asset.id,
+            title: playback.asset.title,
+        });
+        this.narrationDuckActive = false;
+        rampAudioParam(
+            this.context,
+            playback.gain.gain,
+            0,
+            playback.asset.pauseFade,
+        );
+        this.applyMix(0.32);
+        globalThis.clearTimeout(playback.pauseTimer);
+        playback.pauseTimer = globalThis.setTimeout(() => {
+            if (
+                this.narrationPlayback === playback &&
+                playback.state === "paused"
+            )
+                playback.media.pause();
+        }, playback.asset.pauseFade * 1000);
+        playback.pauseTimer?.unref?.();
+        return true;
+    }
+
+    async resumeNarration() {
+        const playback = this.narrationPlayback;
+        if (!playback || playback.state !== "paused") return false;
+        globalThis.clearTimeout(playback.pauseTimer);
+        playback.pauseTimer = 0;
+        playback.state = "playing";
+        this.narrationStatus = Object.freeze({
+            state: "playing",
+            id: playback.asset.id,
+            title: playback.asset.title,
+        });
+        this.narrationDuckActive = true;
+        this.applyMix(0.2);
+        try {
+            await playback.media.play();
+        } catch (error) {
+            playback.state = "paused";
+            this.narrationDuckActive = false;
+            this.applyMix(0.2);
+            this.reportLayerError(
+                { id: playback.asset.id, label: playback.asset.title },
+                error,
+            );
+            return false;
+        }
+        if (this.narrationPlayback !== playback) return false;
+        rampAudioParam(
+            this.context,
+            playback.gain.gain,
+            playback.asset.gain,
+            playback.asset.fadeIn,
+        );
+        return true;
+    }
+
+    async replayNarration() {
+        const asset = this.narrationPlayback?.asset ?? this.lastNarrationAsset;
+        if (!asset) return false;
+        return this.playNarration(asset);
+    }
+
+    stopNarration({ fade = null, skipped = false } = {}) {
+        const playback = this.narrationPlayback;
+        if (!playback) return false;
+        const duration = Math.max(
+            0,
+            Number(fade ?? playback.asset.fadeOut) || 0,
+        );
+        globalThis.clearTimeout(playback.pauseTimer);
+        globalThis.clearTimeout(playback.stopTimer);
+        playback.state = skipped ? "skipped" : "stopped";
+        this.narrationStatus = Object.freeze({
+            state: skipped ? "skipped" : "idle",
+            id: playback.asset.id,
+            title: playback.asset.title,
+        });
+        this.narrationDuckActive = false;
+        this.narrationPausedForVisibility = false;
+        rampAudioParam(this.context, playback.gain.gain, 0, duration);
+        this.applyMix(Math.max(0.12, duration));
+        if (duration <= 0) this.finishNarration(playback, skipped ? "skipped" : "idle");
+        else {
+            playback.stopTimer = globalThis.setTimeout(
+                () =>
+                    this.finishNarration(
+                        playback,
+                        skipped ? "skipped" : "idle",
+                    ),
+                duration * 1000 + 20,
+            );
+            playback.stopTimer?.unref?.();
+        }
+        return true;
+    }
+
+    finishNarration(playback, state) {
+        if (!playback) return;
+        globalThis.clearTimeout(playback.pauseTimer);
+        globalThis.clearTimeout(playback.stopTimer);
+        playback.media.pause?.();
+        playback.media.onended = null;
+        playback.media.removeAttribute?.("src");
+        playback.media.load?.();
+        playback.source.disconnect?.();
+        playback.gain.disconnect?.();
+        if (this.narrationPlayback === playback) {
+            this.narrationPlayback = null;
+            this.narrationDuckActive = false;
+            this.narrationStatus = Object.freeze({
+                state,
+                id: playback.asset.id,
+                title: playback.asset.title,
+            });
+            this.applyMix(0.35);
+        }
+    }
+
+    getNarrationState() {
+        const playback = this.narrationPlayback;
+        const currentTime = Number(playback?.media.currentTime) || 0;
+        const duration = Number(playback?.media.duration) || 0;
+        return Object.freeze({
+            ...this.narrationStatus,
+            currentTime,
+            duration,
+            progress: duration > 0 ? clamp(currentTime / duration) : 0,
+        });
+    }
+
     async playOneShot(id, { auditionToken = 0 } = {}) {
         if (this.state !== "ready" || !this.loader)
             throw new Error("Enable the Sound Engine before playing a cue.");
@@ -943,12 +1148,21 @@ export class SoundEngine {
     async setPageHidden(hidden) {
         if (!this.context || this.state === "locked" || this.destroyed) return;
         if (hidden) {
+            this.narrationPausedForVisibility =
+                this.getNarrationState().state === "playing";
+            if (this.narrationPausedForVisibility) this.pauseNarration();
             await this.context.suspend();
             this.setState("suspended");
         } else {
             await this.context.resume();
             this.setState("ready");
             this.applyMix(0.12);
+            if (
+                this.narrationPausedForVisibility &&
+                this.resolved.world.travelRunning
+            )
+                await this.resumeNarration();
+            this.narrationPausedForVisibility = false;
         }
     }
 
@@ -994,6 +1208,7 @@ export class SoundEngine {
                         fadingOut: stopped,
                     })),
             ),
+            narration: this.getNarrationState(),
             resolved: this.resolved,
         });
     }
@@ -1004,6 +1219,8 @@ export class SoundEngine {
         for (const id of [...this.layers.keys()]) this.stopLayer(id, { fade: 0 });
         this.loader?.clear();
         this.ambienceCueEnvelope = null;
+        this.stopNarration({ fade: 0 });
+        this.lastNarrationAsset = null;
         this.pendingLayers.clear();
         this.failedAssets.clear();
         for (const output of [...this.recordingOutputs]) output.release();
