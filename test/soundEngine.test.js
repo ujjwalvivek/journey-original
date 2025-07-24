@@ -16,6 +16,7 @@ import {
     resolveCueMusicGain,
     SoundEngine,
 } from "../src/audio/soundEngine.js";
+import { normalizeNarrationManifest } from "../src/audio/narrationManifest.js";
 
 class FakeParam {
     constructor(value = 1) {
@@ -115,6 +116,8 @@ class FakeMediaElement {
         this.loaded = false;
         this.onended = null;
         this.ontimeupdate = null;
+        this.currentTime = 0;
+        this.duration = 0;
     }
 
     async play() {
@@ -133,6 +136,61 @@ class FakeMediaElement {
         this.loaded = true;
     }
 }
+
+test("narration ducks the mix and preserves position across train pauses", async () => {
+    const media = new FakeMediaElement();
+    media.duration = 60;
+    const engine = new SoundEngine({
+        manifest: [],
+        AudioContextClass: FakeAudioContext,
+        createMediaElement: () => media,
+    });
+    const [voice] = normalizeNarrationManifest([
+        {
+            id: "voice-test",
+            title: "Voice Test",
+            src: "/voice.opus",
+            fadeIn: 0.1,
+            pauseFade: 0.04,
+            ducking: { environment: 0.6, train: 0.72, music: 0.25 },
+        },
+    ]);
+
+    await engine.unlock();
+    await engine.playNarration(voice);
+    assert.equal(engine.getNarrationState().state, "playing");
+    assert.equal(
+        engine.buses.get("music").stateGain.gain.value,
+        engine.resolved.buses.music * 0.25,
+    );
+
+    media.currentTime = 17.25;
+    engine.pauseNarration();
+    assert.equal(engine.getNarrationState().state, "paused");
+    assert.equal(engine.getNarrationState().currentTime, 17.25);
+    assert.equal(
+        engine.buses.get("music").stateGain.gain.value,
+        engine.resolved.buses.music,
+    );
+
+    await engine.resumeNarration();
+    assert.equal(engine.getNarrationState().state, "playing");
+    assert.equal(engine.getNarrationState().currentTime, 17.25);
+    assert.equal(
+        engine.buses.get("environment").stateGain.gain.value,
+        engine.resolved.buses.environment * 0.6,
+    );
+
+    await engine.setPageHidden(true);
+    assert.equal(engine.getNarrationState().state, "paused");
+    await engine.setPageHidden(false);
+    assert.equal(engine.getNarrationState().state, "playing");
+    assert.equal(engine.getNarrationState().currentTime, 17.25);
+
+    engine.stopNarration({ fade: 0, skipped: true });
+    assert.equal(engine.getNarrationState().state, "skipped");
+    await engine.destroy();
+});
 
 class FakeAudioContext {
     constructor() {
