@@ -18,6 +18,8 @@ import {
 import { WEATHER_FRONTS } from "./weather/weatherFront.js";
 import { SoundEngine } from "./audio/soundEngine.js";
 import { AUDIO_ASSETS } from "./audio/audioManifest.js";
+import { NarrationController } from "./audio/narrationController.js";
+import { NARRATION_ASSETS } from "./audio/narrationManifest.js";
 import { ShowcaseRecorder } from "./showcase/showcaseRecorder.js";
 import {
     runShowcaseSequence,
@@ -87,6 +89,16 @@ const soundVolume = ref(0.8);
 const environmentVolume = ref(1);
 const trainVolume = ref(1);
 const musicVolume = ref(1);
+const voiceVolume = ref(1);
+const narrationEnabled = ref(false);
+const narrationPlayback = ref({
+    available: NARRATION_ASSETS.length > 0,
+    state: "idle",
+    title: "",
+    currentTime: 0,
+    duration: 0,
+    progress: 0,
+});
 const activeScore = ref("WAITING FOR SOUND");
 const activeSoundLayers = ref([]);
 const failedSoundLayers = ref([]);
@@ -94,7 +106,7 @@ const soundBusMuted = ref({});
 const soundSoloBus = ref("");
 const soundLabOpen = ref(false);
 const soundError = ref("");
-const soundSourceCount = AUDIO_ASSETS.length;
+const soundSourceCount = AUDIO_ASSETS.length + NARRATION_ASSETS.length;
 const showcaseState = ref("idle");
 const showcaseProgress = ref(0);
 const showcaseElapsed = ref(0);
@@ -104,6 +116,7 @@ const showcaseError = ref("");
 
 let renderer = null;
 let soundEngine = null;
+let narrationController = null;
 let statsTimer = 0;
 let soundTimer = 0;
 let destroyFallback = null;
@@ -170,9 +183,13 @@ const captureStyle = computed(() => ({
 function toggleTravel() {
     travelRunning.value = !travelRunning.value;
     renderer?.setTravelRunning(travelRunning.value);
+    narrationController?.updateWorldState({
+        travelRunning: travelRunning.value,
+    });
 }
 
 function resetJourney() {
+    narrationController?.reset();
     renderer?.resetJourney();
 }
 
@@ -180,6 +197,7 @@ async function toggleSound() {
     if (!soundEngine || soundState.value === "starting") return;
     if (soundState.value === "error") return;
     if (soundState.value === "locked" || soundState.value === "suspended") {
+        const initialActivation = soundState.value === "locked";
         soundState.value = "starting";
         soundError.value = "";
         try {
@@ -187,6 +205,13 @@ async function toggleSound() {
             await soundEngine.unlock();
             soundMuted.value = false;
             soundEngine.setMuted(false);
+            if (initialActivation)
+                await narrationController?.play().catch((error) => {
+                    console.error("Could not start narration:", error);
+                    soundError.value = `Narration: ${
+                        error instanceof Error ? error.message : String(error)
+                    }`;
+                });
         } catch (error) {
             console.error(error);
             soundError.value =
@@ -232,6 +257,37 @@ function previewSoundTrigger(trigger) {
 
 async function restartCurrentScore() {
     if (soundState.value === "ready") await soundEngine?.restartScore();
+}
+
+function setNarrationEnabled(enabled) {
+    narrationEnabled.value = narrationController?.setEnabled(enabled) ?? enabled;
+    try {
+        window.localStorage.setItem(
+            "journey.narrationEnabled",
+            String(narrationEnabled.value),
+        );
+    } catch {
+        // Narration preference persistence is optional.
+    }
+}
+
+async function playNarration() {
+    if (soundState.value !== "ready") return;
+    await narrationController?.play();
+}
+
+async function replayNarration() {
+    if (soundState.value !== "ready") return;
+    await narrationController?.replay();
+}
+
+function skipNarration() {
+    narrationController?.skip();
+}
+
+function formatNarrationTime(seconds) {
+    const total = Math.max(0, Math.floor(Number(seconds) || 0));
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
 function downloadShowcase(blob) {
@@ -819,6 +875,7 @@ watch(soundVolume, (value) => {
 watch(musicVolume, (value) => {
     setSoundBusVolume("music", value);
 });
+watch(voiceVolume, (value) => setSoundBusVolume("voice", value));
 watch(environmentVolume, (value) => setSoundBusVolume("environment", value));
 watch(trainVolume, (value) => setSoundBusVolume("train", value));
 
@@ -836,6 +893,12 @@ onMounted(async () => {
             restoreVolume("journey.musicVolume", musicVolume);
             restoreVolume("journey.environmentVolume", environmentVolume);
             restoreVolume("journey.trainVolume", trainVolume);
+            restoreVolume("journey.voiceVolume", voiceVolume);
+            const storedNarrationEnabled = window.localStorage.getItem(
+                "journey.narrationEnabled",
+            );
+            if (storedNarrationEnabled !== null)
+                narrationEnabled.value = storedNarrationEnabled !== "false";
         } catch {
             // Storage can be unavailable in privacy-restricted contexts.
         }
@@ -851,6 +914,12 @@ onMounted(async () => {
         soundEngine.setBusVolume("environment", environmentVolume.value);
         soundEngine.setBusVolume("train", trainVolume.value);
         soundEngine.setBusVolume("music", musicVolume.value);
+        soundEngine.setBusVolume("voice", voiceVolume.value);
+        narrationController = new NarrationController({
+            manifest: NARRATION_ASSETS,
+            player: soundEngine,
+        });
+        narrationController.setEnabled(narrationEnabled.value);
 
         if (!navigator.gpu) {
             await showRendererError(
@@ -925,6 +994,7 @@ onMounted(async () => {
         soundTimer = window.setInterval(() => {
             const stats = renderer?.getStats();
             if (stats) {
+                narrationController?.updateWorldState(stats);
                 soundEngine?.updateWorldState(stats);
                 const soundSnapshot = soundEngine?.getState();
                 const scores = soundSnapshot?.activeScores ?? [];
@@ -945,6 +1015,8 @@ onMounted(async () => {
                 failedSoundLayers.value = soundSnapshot?.failedLayers ?? [];
                 soundBusMuted.value = soundSnapshot?.busMuted ?? {};
                 soundSoloBus.value = soundSnapshot?.soloBus ?? "";
+                narrationPlayback.value =
+                    narrationController?.getState() ?? narrationPlayback.value;
             }
         }, 50);
 
@@ -968,6 +1040,7 @@ onBeforeUnmount(() => {
     document.removeEventListener("visibilitychange", onVisibilityChange);
     if (captureUrl.value) URL.revokeObjectURL(captureUrl.value);
     renderer?.destroy();
+    narrationController?.destroy();
     soundEngine?.destroy().catch((error) => console.error(error));
     destroyFallback?.();
 });
@@ -1256,8 +1329,88 @@ onBeforeUnmount(() => {
                                             }"
                                         />
                                     </label>
+                                    <label class="range-row compact-row">
+                                        <span>Voice
+                                            <output>{{ Math.round(voiceVolume * 100) }}%</output>
+                                        </span>
+                                        <input
+                                            v-model.number="voiceVolume"
+                                            type="range"
+                                            min="0"
+                                            max="1"
+                                            step="0.01"
+                                            :style="{
+                                                '--range-progress': `${voiceVolume * 100}%`,
+                                            }"
+                                        />
+                                    </label>
+                                    <div class="narration-control">
+                                        <div class="narration-heading">
+                                            <span>
+                                                <small>NARRATION</small>
+                                                <strong>{{
+                                                    narrationPlayback.available
+                                                        ? narrationPlayback.title || "READY"
+                                                        : "NO RECORDING INSTALLED"
+                                                }}</strong>
+                                            </span>
+                                            <label class="narration-switch">
+                                                <input
+                                                    type="checkbox"
+                                                    :checked="narrationEnabled"
+                                                    @change="setNarrationEnabled($event.target.checked)"
+                                                />
+                                                <span>ENABLED</span>
+                                            </label>
+                                        </div>
+                                        <div class="narration-progress">
+                                            <i>
+                                                <b
+                                                    :style="{
+                                                        transform: `scaleX(${narrationPlayback.progress || 0})`,
+                                                    }"
+                                                ></b>
+                                            </i>
+                                            <span>
+                                                {{ narrationPlayback.state.toUpperCase() }}
+                                                ·
+                                                {{ formatNarrationTime(narrationPlayback.currentTime) }}
+                                                /
+                                                {{ formatNarrationTime(narrationPlayback.duration) }}
+                                            </span>
+                                        </div>
+                                        <div class="narration-actions">
+                                            <button
+                                                type="button"
+                                                :disabled="
+                                                    !narrationPlayback.available ||
+                                                    !narrationEnabled ||
+                                                    soundState !== 'ready'
+                                                "
+                                                @click="playNarration"
+                                            >PLAY</button>
+                                            <button
+                                                type="button"
+                                                :disabled="
+                                                    !narrationPlayback.available ||
+                                                    !narrationEnabled ||
+                                                    soundState !== 'ready'
+                                                "
+                                                @click="replayNarration"
+                                            >REPLAY</button>
+                                            <button
+                                                type="button"
+                                                :disabled="
+                                                    !['playing', 'paused'].includes(
+                                                        narrationPlayback.state,
+                                                    )
+                                                "
+                                                @click="skipNarration"
+                                            >SKIP</button>
+                                        </div>
+                                    </div>
                                     <div
-                                        v-for="bus in ['environment', 'train', 'music']"
+                                        v-for="bus in ['environment', 'train', 'music', 'voice']"
                                         :key="bus"
                                         class="sound-bus-row"
                                     >
