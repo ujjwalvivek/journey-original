@@ -189,8 +189,15 @@ function toggleTravel() {
 }
 
 function resetJourney() {
-    narrationController?.reset();
     renderer?.resetJourney();
+    narrationController
+        ?.reset({ restart: soundState.value === "ready" })
+        .catch((error) => {
+            console.error("Could not restart narration:", error);
+            soundError.value = `Narration: ${
+                error instanceof Error ? error.message : String(error)
+            }`;
+        });
 }
 
 async function toggleSound() {

@@ -42,9 +42,11 @@ export class NarrationController {
         return this.player.stopNarration({ fade: 0.22, skipped: true });
     }
 
-    reset() {
+    async reset({ restart = false } = {}) {
         this.player.stopNarration({ fade: 0 });
         this.travelRunning = true;
+        if (restart && this.enabled) return this.play();
+        return false;
     }
 
     updateWorldState(snapshot = {}) {

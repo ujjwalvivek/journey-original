@@ -126,3 +126,22 @@ test("disabled narration stops playback and cannot be started", async () => {
     assert.equal(await controller.play(), false);
     assert.equal(controller.getState().state, "idle");
 });
+
+test("journey reset restarts enabled narration from the beginning", async () => {
+    const player = new FakeNarrationPlayer();
+    const controller = new NarrationController({
+        manifest: [narration],
+        player,
+    });
+
+    await controller.play();
+    assert.equal(await controller.reset({ restart: true }), true);
+    assert.deepEqual(
+        player.calls.map(([name]) => name),
+        ["play", "stop", "play"],
+    );
+
+    controller.setEnabled(false);
+    assert.equal(await controller.reset({ restart: true }), false);
+    assert.equal(player.calls.at(-1)[0], "stop");
+});
