@@ -1008,7 +1008,11 @@ export class SoundEngine {
         } else {
             source.connect(gain);
         }
-        gain.connect(this.buses.get(asset.bus).stateGain);
+        gain.connect(
+            asset.role === "interface"
+                ? this.masterGain
+                : this.buses.get(asset.bus).stateGain,
+        );
 
         const layer = {
             key,

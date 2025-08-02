@@ -294,7 +294,7 @@ test("weather cue envelope crossfades back into ambience", () => {
 
 test("production audio manifest points to deployed source files", () => {
     const normalized = normalizeAudioManifest(AUDIO_ASSETS);
-    assert.equal(normalized.length, 17);
+    assert.equal(normalized.length, 19);
     for (const asset of normalized) {
         for (const source of asset.sources) {
             const file = new URL(`../public${source.src}`, import.meta.url);
