@@ -594,7 +594,10 @@ export class JourneyRenderer {
         };
     }
 
-    capturePng() {
+    async capturePng() {
+        if (!this.device)
+            throw new Error("The WebGPU device is unavailable for capture.");
+        await this.device.queue.onSubmittedWorkDone();
         return new Promise((resolve, reject) => {
             this.canvas.toBlob((blob) => {
                 if (blob) resolve(blob);
