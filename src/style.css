@@ -828,33 +828,6 @@ canvas {
     min-height: 22px;
 }
 
-.showcase-launch {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-top: 8px;
-    padding: 10px 11px;
-    border: 1px solid rgba(255, 126, 78, 0.48);
-    color: rgba(255, 224, 205, 0.6);
-    background: rgba(104, 34, 19, 0.16);
-    font-size: 6px;
-    letter-spacing: 0.09em;
-    cursor: pointer;
-}
-
-.showcase-launch strong {
-    color: #ffd9c4;
-    font-size: 7px;
-    font-weight: 500;
-}
-
-.showcase-launch:disabled {
-    opacity: 0.38;
-    cursor: default;
-}
-
 .showcase-recorder {
     position: fixed;
     right: clamp(14px, 2vw, 30px);
@@ -1247,7 +1220,7 @@ input[type="range"]:focus-visible::-moz-range-thumb {
 
 .lab-tabs {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     margin: 8px 0 12px;
     border: 1px solid rgba(255, 228, 210, 0.14);
 }
@@ -1357,6 +1330,20 @@ input[type="range"]:focus-visible::-moz-range-thumb {
     grid-template-columns: 1fr 1fr;
     gap: 7px;
     margin-top: 15px;
+}
+
+.journey-actions .journey-reset {
+    grid-column: 1 / -1;
+    border-color: rgba(255, 126, 78, 0.48);
+    color: #ffd9c4;
+    background: rgba(104, 34, 19, 0.16);
+}
+
+.journey-actions .journey-reset:hover,
+.journey-actions .journey-reset:focus-visible {
+    border-color: rgba(255, 145, 99, 0.7);
+    color: #fff2e9;
+    background: rgba(126, 42, 22, 0.3);
 }
 
 .button-row button,

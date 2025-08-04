@@ -104,7 +104,6 @@ const activeSoundLayers = ref([]);
 const failedSoundLayers = ref([]);
 const soundBusMuted = ref({});
 const soundSoloBus = ref("");
-const soundLabOpen = ref(false);
 const soundError = ref("");
 const soundSourceCount = AUDIO_ASSETS.length + NARRATION_ASSETS.length;
 const showcaseState = ref("idle");
@@ -400,6 +399,17 @@ async function startShowcaseRecording() {
         if (showcaseAbortController.signal.aborted)
             throw new DOMException("Showcase recording cancelled.", "AbortError");
         soundMuted.value = soundEngine.setMuted(false);
+        try {
+            await soundEngine.playOneShot("capture-record");
+            await new Promise((resolve) => window.setTimeout(resolve, 350));
+        } catch (error) {
+            console.error("Could not play recording click:", error);
+            soundError.value = `Recorder: ${
+                error instanceof Error ? error.message : String(error)
+            }`;
+        }
+        if (showcaseAbortController.signal.aborted)
+            throw new DOMException("Showcase recording cancelled.", "AbortError");
         showcaseAudioOutput = soundEngine.createRecordingOutput();
 
         const titleBitmap = await createShowcaseTitleBitmap();
@@ -603,6 +613,19 @@ function clearCapture() {
 async function captureStill() {
     if (!renderer || captureActive.value || state.value !== "ready") return;
     capturePhase.value = "capturing";
+    if (soundEngine && soundState.value !== "error") {
+        try {
+            soundEngine.setMasterVolume(soundVolume.value);
+            await soundEngine.unlock();
+            soundMuted.value = soundEngine.setMuted(false);
+            await soundEngine.playOneShot("capture-shutter");
+        } catch (error) {
+            console.error("Could not play capture shutter:", error);
+            soundError.value = `Camera: ${
+                error instanceof Error ? error.message : String(error)
+            }`;
+        }
+    }
     renderer.pausePresentation();
     soundEngine?.setPresentationPaused(true);
     let pendingUrl = "";
@@ -745,6 +768,26 @@ function clearMoodOverrides() {
     renderer?.clearMoodOverrides();
 }
 
+function clearSoundOverrides() {
+    const authoredBusVolume = 1;
+    const buses = ["environment", "train", "music", "voice"];
+
+    environmentVolume.value = authoredBusVolume;
+    trainVolume.value = authoredBusVolume;
+    musicVolume.value = authoredBusVolume;
+    voiceVolume.value = authoredBusVolume;
+
+    for (const bus of buses) {
+        soundEngine?.setBusVolume(bus, authoredBusVolume);
+        soundEngine?.setBusMuted(bus, false);
+    }
+    soundEngine?.setSoloBus("");
+    soundBusMuted.value = Object.fromEntries(
+        buses.map((bus) => [bus, false]),
+    );
+    soundSoloBus.value = "";
+}
+
 function resetToAuthoredWeather() {
     if (!renderer) return;
     renderer.resetToAuthoredWeather();
@@ -798,6 +841,47 @@ async function copyMoodState() {
         copyStatus.value = "COPY FAILED";
     }
     window.setTimeout(() => (copyStatus.value = "COPY STATE"), 1400);
+}
+
+async function copySoundState() {
+    const sound = soundEngine?.getState();
+    if (!sound) return;
+
+    const sceneId = sound.resolved?.world?.sceneId ?? moodId.value;
+    const snapshot = {
+        soundscape: {
+            id: sceneId,
+            name:
+                MOODS.find((mood) => mood.id === sceneId)?.name ?? sceneId,
+        },
+        mixer: {
+            masterVolume: Number(sound.masterVolume.toFixed(4)),
+            muted: sound.muted,
+            busVolumes: Object.fromEntries(
+                Object.entries(sound.busVolumes).map(([id, value]) => [
+                    id,
+                    Number(value.toFixed(4)),
+                ]),
+            ),
+            busMuted: sound.busMuted,
+            soloBus: sound.soloBus || null,
+        },
+        activeLayers: sound.layerDetails,
+        activeScores: sound.activeScores,
+        resolved: sound.resolved,
+    };
+
+    try {
+        await navigator.clipboard.writeText(JSON.stringify(snapshot, null, 2));
+        copyStatus.value = "COPIED";
+    } catch {
+        copyStatus.value = "COPY FAILED";
+    }
+    window.setTimeout(() => (copyStatus.value = "COPY STATE"), 1400);
+}
+
+function copyLabState() {
+    return labMode.value === "sound" ? copySoundState() : copyMoodState();
 }
 
 function onKeydown(event) {
@@ -1217,265 +1301,12 @@ onBeforeUnmount(() => {
                                     }"
                                 />
                             </label>
-                            <div
-                                class="sound-system"
-                                :class="{
-                                    active:
-                                        soundState === 'ready' && !soundMuted,
-                                    muted: soundMuted,
-                                    failed: soundState === 'error',
-                                }"
-                            >
-                                <div class="sound-system-heading">
-                                    <span>SOUND ENGINE</span>
-                                    <strong>{{ soundStatusLabel }}</strong>
-                                </div>
+                            <div class="button-row journey-actions">
                                 <button
-                                    class="sound-toggle"
+                                    class="journey-reset"
                                     type="button"
-                                    :disabled="
-                                        soundState === 'starting' ||
-                                        soundState === 'error'
-                                    "
-                                    :aria-pressed="
-                                        soundState === 'ready' && !soundMuted
-                                    "
-                                    @click="toggleSound"
+                                    @click="resetJourney"
                                 >
-                                    <i aria-hidden="true"><b></b><b></b><b></b></i>
-                                    <span>
-                                        <small
-                                            >{{ soundSourceCount }} SOURCES
-                                            REGISTERED</small
-                                        >
-                                        <strong>{{ soundActionLabel }}</strong>
-                                    </span>
-                                </button>
-                                <label class="range-row sound-volume">
-                                    <span
-                                        >Master volume
-                                        <output
-                                            >{{ Math.round(soundVolume * 100) }}%</output
-                                        ></span
-                                    >
-                                    <input
-                                        v-model.number="soundVolume"
-                                        type="range"
-                                        min="0"
-                                        max="1"
-                                        step="0.01"
-                                        :disabled="soundState === 'error'"
-                                        :style="{
-                                            '--range-progress': `${soundVolume * 100}%`,
-                                        }"
-                                    />
-                                </label>
-                                <div
-                                    class="sound-score-readout"
-                                    aria-live="polite"
-                                >
-                                    <small>CURRENT SCORE</small>
-                                    <strong>{{ activeScore }}</strong>
-                                </div>
-                                <label class="range-row sound-volume">
-                                    <span
-                                        >Music volume
-                                        <output
-                                            >{{ Math.round(musicVolume * 100) }}%</output
-                                        ></span
-                                    >
-                                    <input
-                                        v-model.number="musicVolume"
-                                        type="range"
-                                        min="0"
-                                        max="1"
-                                        step="0.01"
-                                        :disabled="soundState === 'error'"
-                                        :style="{
-                                            '--range-progress': `${musicVolume * 100}%`,
-                                        }"
-                                    />
-                                </label>
-                                <button
-                                    class="sound-lab-toggle"
-                                    type="button"
-                                    :aria-expanded="soundLabOpen"
-                                    @click="soundLabOpen = !soundLabOpen"
-                                >
-                                    <span>MIX / DEBUG</span>
-                                    <strong>{{ soundLabOpen ? "CLOSE" : "OPEN" }}</strong>
-                                </button>
-                                <div v-if="soundLabOpen" class="sound-lab">
-                                    <label class="range-row compact-row">
-                                        <span>Environment
-                                            <output>{{ Math.round(environmentVolume * 100) }}%</output>
-                                        </span>
-                                        <input
-                                            v-model.number="environmentVolume"
-                                            type="range"
-                                            min="0"
-                                            max="1"
-                                            step="0.01"
-                                            :style="{
-                                                '--range-progress': `${environmentVolume * 100}%`,
-                                            }"
-                                        />
-                                    </label>
-                                    <label class="range-row compact-row">
-                                        <span>Train
-                                            <output>{{ Math.round(trainVolume * 100) }}%</output>
-                                        </span>
-                                        <input
-                                            v-model.number="trainVolume"
-                                            type="range"
-                                            min="0"
-                                            max="1"
-                                            step="0.01"
-                                            :style="{
-                                                '--range-progress': `${trainVolume * 100}%`,
-                                            }"
-                                        />
-                                    </label>
-                                    <label class="range-row compact-row">
-                                        <span>Voice
-                                            <output>{{ Math.round(voiceVolume * 100) }}%</output>
-                                        </span>
-                                        <input
-                                            v-model.number="voiceVolume"
-                                            type="range"
-                                            min="0"
-                                            max="1"
-                                            step="0.01"
-                                            :style="{
-                                                '--range-progress': `${voiceVolume * 100}%`,
-                                            }"
-                                        />
-                                    </label>
-                                    <div class="narration-control">
-                                        <div class="narration-heading">
-                                            <span>
-                                                <small>NARRATION</small>
-                                                <strong>{{
-                                                    narrationPlayback.available
-                                                        ? narrationPlayback.title || "READY"
-                                                        : "NO RECORDING INSTALLED"
-                                                }}</strong>
-                                            </span>
-                                            <label class="narration-switch">
-                                                <input
-                                                    type="checkbox"
-                                                    :checked="narrationEnabled"
-                                                    @change="setNarrationEnabled($event.target.checked)"
-                                                />
-                                                <span>ENABLED</span>
-                                            </label>
-                                        </div>
-                                        <div class="narration-progress">
-                                            <i>
-                                                <b
-                                                    :style="{
-                                                        transform: `scaleX(${narrationPlayback.progress || 0})`,
-                                                    }"
-                                                ></b>
-                                            </i>
-                                            <span>
-                                                {{ narrationPlayback.state.toUpperCase() }}
-                                                ·
-                                                {{ formatNarrationTime(narrationPlayback.currentTime) }}
-                                                /
-                                                {{ formatNarrationTime(narrationPlayback.duration) }}
-                                            </span>
-                                        </div>
-                                        <div class="narration-actions">
-                                            <button
-                                                type="button"
-                                                :disabled="
-                                                    !narrationPlayback.available ||
-                                                    !narrationEnabled ||
-                                                    soundState !== 'ready'
-                                                "
-                                                @click="playNarration"
-                                            >PLAY</button>
-                                            <button
-                                                type="button"
-                                                :disabled="
-                                                    !narrationPlayback.available ||
-                                                    !narrationEnabled ||
-                                                    soundState !== 'ready'
-                                                "
-                                                @click="replayNarration"
-                                            >REPLAY</button>
-                                            <button
-                                                type="button"
-                                                :disabled="
-                                                    !['playing', 'paused'].includes(
-                                                        narrationPlayback.state,
-                                                    )
-                                                "
-                                                @click="skipNarration"
-                                            >SKIP</button>
-                                        </div>
-                                    </div>
-                                    <div
-                                        v-for="bus in ['environment', 'train', 'music', 'voice']"
-                                        :key="bus"
-                                        class="sound-bus-row"
-                                    >
-                                        <span>{{ bus }}</span>
-                                        <div>
-                                            <button
-                                                type="button"
-                                                :aria-label="`Mute ${bus} bus`"
-                                                :aria-pressed="Boolean(soundBusMuted[bus])"
-                                                @click="toggleSoundBusMute(bus)"
-                                            >M</button>
-                                            <button
-                                                type="button"
-                                                :aria-label="`Solo ${bus} bus`"
-                                                :aria-pressed="soundSoloBus === bus"
-                                                @click="toggleSoundBusSolo(bus)"
-                                            >S</button>
-                                        </div>
-                                    </div>
-                                    <div class="sound-layer-readout">
-                                        <small>ACTIVE LAYERS</small>
-                                        <span v-if="activeSoundLayers.length === 0">NONE</span>
-                                        <span
-                                            v-for="layer in activeSoundLayers.slice(0, 8)"
-                                            :key="`${layer.bus}:${layer.id}`"
-                                        >{{ layer.bus }} / {{ layer.label }}</span>
-                                    </div>
-                                    <div class="sound-debug-actions">
-                                        <button type="button" @click="restartCurrentScore">
-                                            RESTART SCORE
-                                        </button>
-                                        <button type="button" @click="previewSoundTrigger('train-start')">
-                                            DEPARTURE CUE
-                                        </button>
-                                        <button type="button" @click="previewSoundTrigger('train-stop')">
-                                            HALT CUE
-                                        </button>
-                                        <button type="button" @click="previewSoundTrigger('weather-monsoon')">
-                                            STORM CUE
-                                        </button>
-                                    </div>
-                                </div>
-                                <div
-                                    v-if="failedSoundLayers.length > 0"
-                                    class="sound-degraded"
-                                    role="status"
-                                >
-                                    <span>{{ failedSoundLayers.length }} LAYER FAILURE{{ failedSoundLayers.length === 1 ? "" : "S" }}</span>
-                                    <button type="button" @click="retrySoundLayers">RETRY</button>
-                                </div>
-                                <small
-                                    v-if="soundError"
-                                    class="sound-error"
-                                    role="status"
-                                >{{ soundError }}</small>
-                            </div>
-                            <div class="button-row">
-                                <button type="button" @click="resetJourney">
                                     RESET JOURNEY
                                 </button>
                                 <button
@@ -1484,18 +1315,16 @@ onBeforeUnmount(() => {
                                     :disabled="captureActive"
                                     @click="captureStill"
                                 >
-                                    {{ capturePhase === "capturing" ? "CAPTURING" : "CAPTURE PNG" }}
+                                    {{ capturePhase === "capturing" ? "CAPTURING" : "SCREENSHOT FRAME" }}
+                                </button>
+                                <button
+                                    type="button"
+                                    :disabled="showcaseActive || captureActive"
+                                    @click="startShowcaseRecording"
+                                >
+                                    {{ showcaseActive ? "RECORDING" : "RECORD" }}
                                 </button>
                             </div>
-                            <button
-                                class="showcase-launch"
-                                type="button"
-                                :disabled="showcaseActive || captureActive"
-                                @click="startShowcaseRecording"
-                            >
-                                <span>AUTHOR CAPTURE</span>
-                                <strong>RECORD {{ SHOWCASE_DURATION }}s SHOWCASE</strong>
-                            </button>
                             <small
                                 v-if="showcaseError"
                                 class="sound-error"
@@ -1738,6 +1567,14 @@ onBeforeUnmount(() => {
                                 >
                                     WEATHER
                                 </button>
+                                <button
+                                    type="button"
+                                    role="tab"
+                                    :aria-selected="labMode === 'sound'"
+                                    @click="labMode = 'sound'"
+                                >
+                                    SOUND
+                                </button>
                             </div>
 
                             <template v-if="labMode === 'scene'">
@@ -1781,7 +1618,7 @@ onBeforeUnmount(() => {
                                 </div>
                             </template>
 
-                            <template v-else>
+                            <template v-else-if="labMode === 'weather'">
                                 <div class="weather-diagnostics">
                                     <span><small>STATE</small><strong>{{ selectedWeatherName }}</strong></span>
                                     <span><small>SURFACE</small><strong>{{ Math.round(surfaceWetness * 100) }}% WET</strong></span>
@@ -1918,6 +1755,267 @@ onBeforeUnmount(() => {
                                 </template>
                             </template>
 
+                            <template v-else-if="labMode === 'sound'">
+                                <div
+                                    class="sound-system"
+                                    :class="{
+                                        active:
+                                            soundState === 'ready' && !soundMuted,
+                                        muted: soundMuted,
+                                        failed: soundState === 'error',
+                                    }"
+                                >
+                                    <div class="sound-system-heading">
+                                        <span>SOUND ENGINE</span>
+                                        <strong>{{ soundStatusLabel }}</strong>
+                                    </div>
+                                    <button
+                                        class="sound-toggle"
+                                        type="button"
+                                        :disabled="
+                                            soundState === 'starting' ||
+                                            soundState === 'error'
+                                        "
+                                        :aria-pressed="
+                                            soundState === 'ready' && !soundMuted
+                                        "
+                                        @click="toggleSound"
+                                    >
+                                        <i aria-hidden="true"><b></b><b></b><b></b></i>
+                                        <span>
+                                            <small
+                                                >{{ soundSourceCount }} SOURCES
+                                                REGISTERED</small
+                                            >
+                                            <strong>{{ soundActionLabel }}</strong>
+                                        </span>
+                                    </button>
+                                    <label class="range-row sound-volume">
+                                        <span
+                                            >Master volume
+                                            <output
+                                                >{{ Math.round(soundVolume * 100) }}%</output
+                                            ></span
+                                        >
+                                        <input
+                                            v-model.number="soundVolume"
+                                            type="range"
+                                            min="0"
+                                            max="1"
+                                            step="0.01"
+                                            :disabled="soundState === 'error'"
+                                            :style="{
+                                                '--range-progress': `${soundVolume * 100}%`,
+                                            }"
+                                        />
+                                    </label>
+                                    <div class="sound-score-readout">
+                                        <small>ACTIVE SOUNDSCAPE</small>
+                                        <strong>{{ selectedMoodName }}</strong>
+                                    </div>
+                                    <div
+                                        class="sound-score-readout"
+                                        aria-live="polite"
+                                    >
+                                        <small>CURRENT SCORE</small>
+                                        <strong>{{ activeScore }}</strong>
+                                    </div>
+                                    <label class="range-row sound-volume">
+                                        <span
+                                            >Music volume
+                                            <output
+                                                >{{ Math.round(musicVolume * 100) }}%</output
+                                            ></span
+                                        >
+                                        <input
+                                            v-model.number="musicVolume"
+                                            type="range"
+                                            min="0"
+                                            max="1"
+                                            step="0.01"
+                                            :disabled="soundState === 'error'"
+                                            :style="{
+                                                '--range-progress': `${musicVolume * 100}%`,
+                                            }"
+                                        />
+                                    </label>
+                                    <div
+                                        class="sound-lab-toggle"
+                                    >
+                                        <span>MIX / DEBUG</span>
+                                        <strong>LIVE</strong>
+                                    </div>
+                                    <div class="sound-lab">
+                                        <label class="range-row compact-row">
+                                            <span>Environment
+                                                <output>{{ Math.round(environmentVolume * 100) }}%</output>
+                                            </span>
+                                            <input
+                                                v-model.number="environmentVolume"
+                                                type="range"
+                                                min="0"
+                                                max="1"
+                                                step="0.01"
+                                                :style="{
+                                                    '--range-progress': `${environmentVolume * 100}%`,
+                                                }"
+                                            />
+                                        </label>
+                                        <label class="range-row compact-row">
+                                            <span>Train
+                                                <output>{{ Math.round(trainVolume * 100) }}%</output>
+                                            </span>
+                                            <input
+                                                v-model.number="trainVolume"
+                                                type="range"
+                                                min="0"
+                                                max="1"
+                                                step="0.01"
+                                                :style="{
+                                                    '--range-progress': `${trainVolume * 100}%`,
+                                                }"
+                                            />
+                                        </label>
+                                        <label class="range-row compact-row">
+                                            <span>Voice
+                                                <output>{{ Math.round(voiceVolume * 100) }}%</output>
+                                            </span>
+                                            <input
+                                                v-model.number="voiceVolume"
+                                                type="range"
+                                                min="0"
+                                                max="1"
+                                                step="0.01"
+                                                :style="{
+                                                    '--range-progress': `${voiceVolume * 100}%`,
+                                                }"
+                                            />
+                                        </label>
+                                        <div class="narration-control">
+                                            <div class="narration-heading">
+                                                <span>
+                                                    <small>NARRATION</small>
+                                                    <strong>{{
+                                                        narrationPlayback.available
+                                                            ? narrationPlayback.title || "READY"
+                                                            : "NO RECORDING INSTALLED"
+                                                    }}</strong>
+                                                </span>
+                                                <label class="narration-switch">
+                                                    <input
+                                                        type="checkbox"
+                                                        :checked="narrationEnabled"
+                                                        @change="setNarrationEnabled($event.target.checked)"
+                                                    />
+                                                    <span>ENABLED</span>
+                                                </label>
+                                            </div>
+                                            <div class="narration-progress">
+                                                <i>
+                                                    <b
+                                                        :style="{
+                                                            transform: `scaleX(${narrationPlayback.progress || 0})`,
+                                                        }"
+                                                    ></b>
+                                                </i>
+                                                <span>
+                                                    {{ narrationPlayback.state.toUpperCase() }}
+                                                    ·
+                                                    {{ formatNarrationTime(narrationPlayback.currentTime) }}
+                                                    /
+                                                    {{ formatNarrationTime(narrationPlayback.duration) }}
+                                                </span>
+                                            </div>
+                                            <div class="narration-actions">
+                                                <button
+                                                    type="button"
+                                                    :disabled="
+                                                        !narrationPlayback.available ||
+                                                        !narrationEnabled ||
+                                                        soundState !== 'ready'
+                                                    "
+                                                    @click="playNarration"
+                                                >PLAY</button>
+                                                <button
+                                                    type="button"
+                                                    :disabled="
+                                                        !narrationPlayback.available ||
+                                                        !narrationEnabled ||
+                                                        soundState !== 'ready'
+                                                    "
+                                                    @click="replayNarration"
+                                                >REPLAY</button>
+                                                <button
+                                                    type="button"
+                                                    :disabled="
+                                                        !['playing', 'paused'].includes(
+                                                            narrationPlayback.state,
+                                                        )
+                                                    "
+                                                    @click="skipNarration"
+                                                >SKIP</button>
+                                            </div>
+                                        </div>
+                                        <div
+                                            v-for="bus in ['environment', 'train', 'music', 'voice']"
+                                            :key="bus"
+                                            class="sound-bus-row"
+                                        >
+                                            <span>{{ bus }}</span>
+                                            <div>
+                                                <button
+                                                    type="button"
+                                                    :aria-label="`Mute ${bus} bus`"
+                                                    :aria-pressed="Boolean(soundBusMuted[bus])"
+                                                    @click="toggleSoundBusMute(bus)"
+                                                >M</button>
+                                                <button
+                                                    type="button"
+                                                    :aria-label="`Solo ${bus} bus`"
+                                                    :aria-pressed="soundSoloBus === bus"
+                                                    @click="toggleSoundBusSolo(bus)"
+                                                >S</button>
+                                            </div>
+                                        </div>
+                                        <div class="sound-layer-readout">
+                                            <small>ACTIVE LAYERS</small>
+                                            <span v-if="activeSoundLayers.length === 0">NONE</span>
+                                            <span
+                                                v-for="layer in activeSoundLayers.slice(0, 8)"
+                                                :key="`${layer.bus}:${layer.id}`"
+                                            >{{ layer.bus }} / {{ layer.label }}</span>
+                                        </div>
+                                        <div class="sound-debug-actions">
+                                            <button type="button" @click="restartCurrentScore">
+                                                RESTART SCORE
+                                            </button>
+                                            <button type="button" @click="previewSoundTrigger('train-start')">
+                                                DEPARTURE CUE
+                                            </button>
+                                            <button type="button" @click="previewSoundTrigger('train-stop')">
+                                                HALT CUE
+                                            </button>
+                                            <button type="button" @click="previewSoundTrigger('weather-monsoon')">
+                                                STORM CUE
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div
+                                        v-if="failedSoundLayers.length > 0"
+                                        class="sound-degraded"
+                                        role="status"
+                                    >
+                                        <span>{{ failedSoundLayers.length }} LAYER FAILURE{{ failedSoundLayers.length === 1 ? "" : "S" }}</span>
+                                        <button type="button" @click="retrySoundLayers">RETRY</button>
+                                    </div>
+                                    <small
+                                        v-if="soundError"
+                                        class="sound-error"
+                                        role="status"
+                                    >{{ soundError }}</small>
+                                </div>
+                            </template>
+
                             <div class="button-row sticky-actions">
                                 <button
                                     v-if="labMode === 'weather'"
@@ -1926,16 +2024,30 @@ onBeforeUnmount(() => {
                                 >
                                     CLEAR OVERRIDES
                                 </button>
-                                <button v-else type="button" @click="clearMoodOverrides">
+                                <button
+                                    v-else-if="labMode === 'scene'"
+                                    type="button"
+                                    @click="clearMoodOverrides"
+                                >
                                     CLEAR OVERRIDES
                                 </button>
-                                <button type="button" @click="copyMoodState">
+                                <button
+                                    v-else
+                                    type="button"
+                                    @click="clearSoundOverrides"
+                                >
+                                    CLEAR OVERRIDES
+                                </button>
+                                <button type="button" @click="copyLabState">
                                     {{ copyStatus }}
                                 </button>
                             </div>
                         </section>
 
-                        <section v-else class="panel-content credits-content">
+                        <section
+                            v-else
+                            class="panel-content credits-content"
+                        >
                             <div class="drawer-heading">
                                 <span>05 / CREDITS</span>
                                 <span>JOURNEY</span>
