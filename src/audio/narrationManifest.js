@@ -3,23 +3,34 @@ const opus = (src) => Object.freeze({
     type: "audio/ogg; codecs=opus",
 });
 
-export const NARRATION_ASSETS = Object.freeze([
-    Object.freeze({
-        id: "narrative-default",
-        title: "The Journey",
-        sources: Object.freeze([
-            opus("/audio/voice/narrative-default.opus"),
-        ]),
-        gain: 1,
-        fadeIn: 0.28,
-        fadeOut: 0.5,
-        pauseFade: 0.14,
-        ducking: Object.freeze({
-            environment: 0.68,
-            train: 0.76,
-            music: 0.3,
-        }),
+const NARRATION_MIX = Object.freeze({
+    gain: 1,
+    fadeIn: 0.28,
+    fadeOut: 0.5,
+    pauseFade: 0.14,
+    ducking: Object.freeze({
+        environment: 0.68,
+        train: 0.76,
+        music: 0.3,
     }),
+});
+
+const narration = (id, title, sceneId, src) =>
+    Object.freeze({
+        id,
+        title,
+        sceneId,
+        sources: Object.freeze([opus(src)]),
+        ...NARRATION_MIX,
+    });
+
+export const NARRATION_ASSETS = Object.freeze([
+    narration("narrative-1", "Departure", "departure", "/audio/voice/narrative-1.opus"),
+    narration("narrative-2", "Ember", "ember", "/audio/voice/narrative-2.opus"),
+    narration("narrative-3", "Sakura", "sakura", "/audio/voice/narrative-3.opus"),
+    narration("narrative-4", "Monsoon", "monsoon", "/audio/voice/narrative-4.opus"),
+    narration("narrative-5", "Blue Hour", "blue-hour", "/audio/voice/narrative-5.opus"),
+    narration("narrative-6", "Night Rail", "night-rail", "/audio/voice/narrative-6.opus"),
 ]);
 
 const toFinite = (value, fallback) => {
@@ -65,10 +76,11 @@ export function normalizeNarrationManifest(entries = NARRATION_ASSETS) {
         return Object.freeze({
             id,
             title: String(entry.title || id),
+            sceneId: String(entry.sceneId || ""),
             sources: Object.freeze(sources),
             gain: clamp(entry.gain ?? 1, 0, 2),
-            fadeIn: clamp(entry.fadeIn ?? 0.25, 0, 3),
-            fadeOut: clamp(entry.fadeOut ?? 0.4, 0, 4),
+            fadeIn: clamp(entry.fadeIn ?? 0.28, 0, 3),
+            fadeOut: clamp(entry.fadeOut ?? 0.5, 0, 4),
             pauseFade: clamp(entry.pauseFade ?? 0.14, 0.04, 0.5),
             ducking: Object.freeze({
                 environment: clamp(entry.ducking?.environment ?? 0.68),
