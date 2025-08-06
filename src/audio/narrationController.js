@@ -42,15 +42,19 @@ export class NarrationController {
         return this.player.stopNarration({ fade: 0.22, skipped: true });
     }
 
-    async reset({ restart = false } = {}) {
+    async reset({ restart = false, narrationId = this.selectedId } = {}) {
         this.player.stopNarration({ fade: 0 });
         this.travelRunning = true;
-        if (restart && this.enabled) return this.play();
+        if (this.assets.has(String(narrationId || "")))
+            this.selectedId = String(narrationId);
+        if (restart && this.enabled) return this.play(this.selectedId);
         return false;
     }
 
     updateWorldState(snapshot = {}) {
-        const running = snapshot.travelRunning !== false;
+        const running =
+            snapshot.effectiveTravelRunning ??
+            (snapshot.travelRunning !== false && snapshot.dwellActive !== true);
         if (running === this.travelRunning) return this.getState();
         this.travelRunning = running;
         const narration = this.player.getNarrationState();
