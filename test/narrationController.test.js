@@ -74,6 +74,10 @@ test("narration manifest validates identity, sources, and ducking", () => {
         train: 0.7,
         music: 0.2,
     });
+    assert.equal(normalized[0].gain, 1);
+    assert.equal(normalized[0].fadeIn, 0.28);
+    assert.equal(normalized[0].fadeOut, 0.5);
+    assert.equal(normalized[0].pauseFade, 0.14);
     assert.throws(
         () => normalizeNarrationManifest([narration, narration]),
         /Duplicate narration id/,
@@ -86,7 +90,7 @@ test("narration manifest validates identity, sources, and ducking", () => {
 
 test("production narration manifest points to a deployed voice recording", () => {
     const normalized = normalizeNarrationManifest(NARRATION_ASSETS);
-    assert.equal(normalized.length, 1);
+    assert.equal(normalized.length, 6);
     for (const asset of normalized)
         for (const source of asset.sources)
             assert.equal(
@@ -94,6 +98,21 @@ test("production narration manifest points to a deployed voice recording", () =>
                 true,
                 `Missing narration source: public${source.src}`,
             );
+    assert.deepEqual(
+        normalized.map(({ sceneId }) => sceneId),
+        ["departure", "ember", "sakura", "monsoon", "blue-hour", "night-rail"],
+    );
+    for (const asset of normalized) {
+        assert.equal(asset.gain, 1);
+        assert.equal(asset.fadeIn, 0.28);
+        assert.equal(asset.fadeOut, 0.5);
+        assert.equal(asset.pauseFade, 0.14);
+        assert.deepEqual(asset.ducking, {
+            environment: 0.68,
+            train: 0.76,
+            music: 0.3,
+        });
+    }
 });
 
 test("train state pauses and resumes narration at the player layer", async () => {
@@ -113,6 +132,27 @@ test("train state pauses and resumes narration at the player layer", async () =>
         player.calls.map(([name]) => name),
         ["play", "pause", "resume"],
     );
+});
+
+test("authored dwell pauses narration without disabling it", async () => {
+    const player = new FakeNarrationPlayer();
+    const controller = new NarrationController({
+        manifest: [narration],
+        player,
+    });
+
+    await controller.play();
+    controller.updateWorldState({
+        travelRunning: true,
+        effectiveTravelRunning: false,
+    });
+    assert.equal(controller.getState().state, "paused");
+
+    controller.updateWorldState({
+        travelRunning: true,
+        effectiveTravelRunning: true,
+    });
+    assert.equal(controller.getState().state, "playing");
 });
 
 test("disabled narration stops playback and cannot be started", async () => {
