@@ -92,6 +92,7 @@ export class SoundEngine {
         createMediaElement = defaultCreateMediaElement,
         onStateChange = () => {},
         onLayerError = () => {},
+        onNarrationComplete = () => {},
     } = {}) {
         this.manifest = normalizeAudioManifest(manifest);
         this.assets = new Map(this.manifest.map((asset) => [asset.id, asset]));
@@ -101,6 +102,7 @@ export class SoundEngine {
         this.createMediaElement = createMediaElement;
         this.onStateChange = onStateChange;
         this.onLayerError = onLayerError;
+        this.onNarrationComplete = onNarrationComplete;
 
         this.state = "locked";
         this.context = null;
@@ -113,6 +115,7 @@ export class SoundEngine {
         this.failedAssets = new Map();
         this.recordingOutputs = new Set();
         this.lastTriggerAt = new Map();
+        this.triggerGeneration = new Map();
         this.manualAuditionToken = 0;
         this.layerInstance = 0;
         this.unlockPromise = null;
@@ -356,6 +359,14 @@ export class SoundEngine {
         const journeyRestarted =
             hadWorldState &&
             this.resolved.world.journeyTime < previousJourneyTime - 0.25;
+        if (
+            !journeyRestarted &&
+            hadWorldState &&
+            previousWeatherId === "monsoon" &&
+            this.resolved.world.weatherId !== "monsoon"
+        ) {
+            this.stopTrigger("weather-monsoon");
+        }
         if (journeyRestarted) this.resetAudioTimeline();
         if (
             !journeyRestarted &&
@@ -685,6 +696,7 @@ export class SoundEngine {
                     startedAt + asset.durationHint * asset.musicEntryFraction;
                 this.ambienceCueEnvelope = {
                     key: `pending:${asset.id}`,
+                    trigger,
                     startedAt,
                     duration: asset.durationHint,
                     fadeIn: asset.fadeIn,
@@ -697,11 +709,48 @@ export class SoundEngine {
                 };
                 this.deferIncomingScores(musicEntryAt);
             }
-            this.playOneShot(asset.id, { auditionToken }).catch((error) => {
+            const generation = this.triggerGeneration.get(trigger) ?? 0;
+            this.playOneShot(asset.id, {
+                auditionToken,
+                trigger,
+                triggerGeneration: generation,
+            }).catch((error) => {
                 this.reportLayerError(asset, error);
             });
         }
         return true;
+    }
+
+    stopTrigger(trigger, { fade = null } = {}) {
+        if (!trigger) return false;
+        const matchingAssets = this.manifest.filter(
+            (asset) => asset.trigger === trigger,
+        );
+        const authoredFade = Math.max(
+            0.12,
+            ...matchingAssets.map((asset) =>
+                Math.max(asset.fadeOut, asset.fade),
+            ),
+        );
+        const duration =
+            fade === null
+                ? authoredFade
+                : Math.max(0, Number(fade) || 0);
+        this.triggerGeneration.set(
+            trigger,
+            (this.triggerGeneration.get(trigger) ?? 0) + 1,
+        );
+        let stopped = false;
+        for (const [key, layer] of this.layers) {
+            if (layer.asset.trigger !== trigger) continue;
+            stopped = this.stopLayer(key, { fade: duration }) || stopped;
+        }
+        if (this.ambienceCueEnvelope?.trigger === trigger) {
+            this.ambienceCueEnvelope = null;
+            stopped = true;
+        }
+        if (stopped) this.applyMix(Math.max(0.08, duration));
+        return stopped;
     }
 
     previewTrigger(trigger) {
@@ -937,7 +986,8 @@ export class SoundEngine {
         playback.media.load?.();
         playback.source.disconnect?.();
         playback.gain.disconnect?.();
-        if (this.narrationPlayback === playback) {
+        const wasCurrent = this.narrationPlayback === playback;
+        if (wasCurrent) {
             this.narrationPlayback = null;
             this.narrationDuckActive = false;
             this.narrationStatus = Object.freeze({
@@ -946,6 +996,16 @@ export class SoundEngine {
                 title: playback.asset.title,
             });
             this.applyMix(0.35);
+        }
+        if (wasCurrent && state === "completed") {
+            try {
+                this.onNarrationComplete({
+                    id: playback.asset.id,
+                    title: playback.asset.title,
+                });
+            } catch (error) {
+                console.error("Narration completion callback failed:", error);
+            }
         }
     }
 
@@ -961,7 +1021,10 @@ export class SoundEngine {
         });
     }
 
-    async playOneShot(id, { auditionToken = 0 } = {}) {
+    async playOneShot(
+        id,
+        { auditionToken = 0, trigger = "", triggerGeneration = 0 } = {},
+    ) {
         if (this.state !== "ready" || !this.loader)
             throw new Error("Enable the Sound Engine before playing a cue.");
         const asset = this.assets.get(id);
@@ -970,6 +1033,11 @@ export class SoundEngine {
         const buffer = await this.loader.load(asset);
         if (this.destroyed || this.state !== "ready") return null;
         if (auditionToken && auditionToken !== this.manualAuditionToken)
+            return null;
+        if (
+            trigger &&
+            triggerGeneration !== (this.triggerGeneration.get(trigger) ?? 0)
+        )
             return null;
         const source = this.context.createBufferSource();
         const panner = this.context.createStereoPanner?.() ?? null;
@@ -1030,6 +1098,7 @@ export class SoundEngine {
         ) {
             this.ambienceCueEnvelope = {
                 key,
+                trigger,
                 startedAt,
                 duration,
                 fadeIn,
@@ -1229,6 +1298,7 @@ export class SoundEngine {
         this.failedAssets.clear();
         for (const output of [...this.recordingOutputs]) output.release();
         this.lastTriggerAt.clear();
+        this.triggerGeneration.clear();
         this.manualAuditionToken += 1;
         for (const { stateGain, volumeGain, filter } of this.buses.values()) {
             stateGain.disconnect?.();
