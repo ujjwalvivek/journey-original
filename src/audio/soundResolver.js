@@ -25,7 +25,9 @@ export function normalizeSoundWorldState(snapshot = {}) {
         cueId: String(snapshot.cueId || "departure"),
         journeyTime: Math.max(0, Number(snapshot.travelTime) || 0),
         weatherId: effectiveWeatherId,
-        travelRunning: snapshot.travelRunning !== false,
+        travelRunning:
+            snapshot.effectiveTravelRunning ??
+            (snapshot.travelRunning !== false && snapshot.dwellActive !== true),
         travelSpeed: clamp(snapshot.travelSpeed || 1, 0.1, 2.5),
         motionLevel: clamp(
             snapshot.motionLevel ?? (snapshot.travelRunning === false ? 0 : 1),
