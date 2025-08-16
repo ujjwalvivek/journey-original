@@ -192,6 +192,36 @@ test("narration ducks the mix and preserves position across train pauses", async
     await engine.destroy();
 });
 
+test("reports natural narration completion separately from manual stops", async () => {
+    const media = new FakeMediaElement();
+    let completed = null;
+    const engine = new SoundEngine({
+        manifest: [],
+        AudioContextClass: FakeAudioContext,
+        createMediaElement: () => media,
+        onNarrationComplete: (event) => {
+            completed = event;
+        },
+    });
+    const [voice] = normalizeNarrationManifest([
+        { id: "voice-complete", title: "Complete", src: "/voice.opus" },
+    ]);
+
+    await engine.unlock();
+    await engine.playNarration(voice);
+    media.onended?.();
+    assert.deepEqual(completed, {
+        id: "voice-complete",
+        title: "Complete",
+    });
+
+    completed = null;
+    await engine.playNarration(voice);
+    engine.stopNarration({ fade: 0 });
+    assert.equal(completed, null);
+    await engine.destroy();
+});
+
 class FakeAudioContext {
     constructor() {
         this.currentTime = 4;
@@ -384,6 +414,33 @@ test("Sound Engine unlocks lazily and starts manifest layers", async () => {
     assert.deepEqual(states, ["ready", "suspended", "ready", "destroyed"]);
 });
 
+test("speed changes update active train loops without restarting them", async () => {
+    const engine = new SoundEngine({
+        manifest,
+        AudioContextClass: FakeAudioContext,
+        fetchFn: async () => ({
+            ok: true,
+            arrayBuffer: async () => new ArrayBuffer(8),
+        }),
+    });
+    engine.updateWorldState({ travelRunning: true, travelSpeed: 0.45 });
+    await engine.unlock();
+
+    const layer = engine.layers.get("rail-test");
+    const source = layer.source;
+    const initialRate = source.playbackRate.value;
+    const initialSourceCount = engine.context.sources.length;
+
+    engine.updateWorldState({ travelRunning: true, travelSpeed: 2.1 });
+
+    assert.strictEqual(engine.layers.get("rail-test"), layer);
+    assert.strictEqual(engine.layers.get("rail-test").source, source);
+    assert.equal(engine.context.sources.length, initialSourceCount);
+    assert.equal(source.stoppedAt, null);
+    assert.ok(source.playbackRate.value > initialRate);
+    await engine.destroy();
+});
+
 test("reactive weather layers load on demand and train changes fire cues", async () => {
     const reactiveManifest = [
         {
@@ -489,6 +546,52 @@ test("weather arrival cues do not cancel transport cues", async () => {
         [...engine.layers.keys()].some((id) => id.startsWith("storm-test#")),
         true,
     );
+    engine.updateWorldState({
+        moodId: "departure",
+        weatherId: "clear",
+        authoredWeatherId: "clear",
+    });
+    assert.equal(
+        [...engine.layers.keys()].some((id) => id.startsWith("storm-test#")),
+        false,
+    );
+    await engine.destroy();
+});
+
+test("stopping a weather trigger fades and removes its one-shot", async () => {
+    const engine = new SoundEngine({
+        manifest: [
+            {
+                id: "storm-test",
+                bus: "music",
+                role: "weather-transition",
+                src: "/storm.ogg",
+                loop: false,
+                trigger: "weather-monsoon",
+                triggerGroup: "weather",
+                duckAmbience: 0.3,
+                duckMusic: 0.4,
+                fadeOut: 5,
+            },
+        ],
+        AudioContextClass: FakeAudioContext,
+        fetchFn: async () => ({
+            ok: true,
+            arrayBuffer: async () => new ArrayBuffer(8),
+        }),
+    });
+    engine.updateWorldState({ weatherId: "clear" });
+    await engine.unlock();
+    assert.equal(engine.playTrigger("weather-monsoon"), true);
+    await new Promise((resolve) => setImmediate(resolve));
+    const layerKey = [...engine.layers.keys()].find((id) =>
+        id.startsWith("storm-test#"),
+    );
+    assert.ok(layerKey);
+    assert.equal(engine.stopTrigger("weather-monsoon"), true);
+    assert.equal(engine.context.sources.at(-1).stoppedAt, 9);
+    assert.equal(engine.layers.has(layerKey), false);
+    assert.equal(engine.ambienceCueEnvelope, null);
     await engine.destroy();
 });
 
