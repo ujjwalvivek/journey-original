@@ -1,5 +1,14 @@
 const clamp01 = (value) => Math.max(0, Math.min(1, value));
 
+export const PALETTE_INTERPOLATION_MODES = Object.freeze([
+    Object.freeze({ id: "rgb", name: "RGB" }),
+    Object.freeze({ id: "oklab", name: "OKLAB" }),
+]);
+
+const PALETTE_INTERPOLATION_IDS = new Set(
+    PALETTE_INTERPOLATION_MODES.map(({ id }) => id),
+);
+
 const BASE_WORLD = Object.freeze({
     exposure: 1,
     cloudCoverage: 0,
@@ -361,9 +370,67 @@ function lerp(a, b, t) {
     return a + (b - a) * t;
 }
 
-function lerpValue(a, b, t) {
+function srgbChannelToLinear(value) {
+    return value <= 0.04045
+        ? value / 12.92
+        : ((value + 0.055) / 1.055) ** 2.4;
+}
+
+function linearChannelToSrgb(value) {
+    return value <= 0.0031308
+        ? value * 12.92
+        : 1.055 * value ** (1 / 2.4) - 0.055;
+}
+
+function rgbToOklab([red, green, blue]) {
+    const r = srgbChannelToLinear(red);
+    const g = srgbChannelToLinear(green);
+    const b = srgbChannelToLinear(blue);
+    const l = Math.cbrt(
+        0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b,
+    );
+    const m = Math.cbrt(
+        0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b,
+    );
+    const s = Math.cbrt(
+        0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b,
+    );
+    return [
+        0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+        1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+        0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+    ];
+}
+
+function oklabToRgb([lightness, a, b]) {
+    const l = (lightness + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+    const m = (lightness - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+    const s = (lightness - 0.0894841775 * a - 1.291485548 * b) ** 3;
+    return [
+        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+    ].map((value) => clamp01(linearChannelToSrgb(value)));
+}
+
+function lerpColor(a, b, t, mode) {
+    if (t <= 0) return [...a];
+    if (t >= 1) return [...b];
+    if (mode === "oklab") {
+        const from = rgbToOklab(a);
+        const to = rgbToOklab(b);
+        return oklabToRgb(
+            from.map((value, index) => lerp(value, to[index], t)),
+        );
+    }
+    return a.map((value, index) => lerp(value, b[index], t));
+}
+
+function lerpValue(a, b, t, mode = "rgb", isColor = false) {
     if (Array.isArray(a))
-        return a.map((value, index) => lerp(value, b[index], t));
+        return isColor
+            ? lerpColor(a, b, t, mode)
+            : a.map((value, index) => lerp(value, b[index], t));
     return lerp(a, b, t);
 }
 
@@ -390,11 +457,17 @@ function cloneState(state) {
     );
 }
 
-function blendState(base, target, intensity) {
+function blendState(base, target, intensity, paletteInterpolation) {
     return Object.fromEntries(
         Object.keys(base).map((key) => [
             key,
-            lerpValue(base[key], target[key], intensity),
+            lerpValue(
+                base[key],
+                target[key],
+                intensity,
+                paletteInterpolation,
+                PROPERTY_GROUP[key] === "color",
+            ),
         ]),
     );
 }
@@ -415,6 +488,7 @@ export class MoodEngine {
         this.cycleSeconds = 14;
         this.lastCycle = nowSeconds;
         this.overrides = {};
+        this.paletteInterpolation = "rgb";
     }
 
     getPreset(id) {
@@ -443,6 +517,13 @@ export class MoodEngine {
 
     setCycleSeconds(value) {
         this.cycleSeconds = Math.max(5, Math.min(60, Number(value) || 14));
+    }
+
+    setPaletteInterpolation(mode) {
+        this.paletteInterpolation = PALETTE_INTERPOLATION_IDS.has(mode)
+            ? mode
+            : "rgb";
+        return this.paletteInterpolation;
     }
 
     delayTimeline(seconds) {
@@ -493,8 +574,18 @@ export class MoodEngine {
                 this.from[key],
                 this.target[key],
                 easing(timing.easing, progress),
+                this.paletteInterpolation,
+                group === "color",
             );
         }
+    }
+
+    getTransitionProgress(nowSeconds = performance.now() / 1000) {
+        const elapsed = Math.max(0, nowSeconds - this.transitionStart);
+        const duration = Math.max(
+            ...Object.values(this.transition).map(({ duration }) => duration),
+        );
+        return duration <= 0 ? 1 : Math.min(1, elapsed / duration);
     }
 
     update(nowSeconds) {
@@ -507,7 +598,13 @@ export class MoodEngine {
             id: this.currentId,
             defaultWeatherId: this.getPreset(this.currentId).defaultWeatherId,
             intensity: this.intensity,
-            ...blendState(this.base, this.current, this.intensity),
+            paletteInterpolation: this.paletteInterpolation,
+            ...blendState(
+                this.base,
+                this.current,
+                this.intensity,
+                this.paletteInterpolation,
+            ),
         };
         Object.assign(resolved, this.overrides);
         return resolved;
