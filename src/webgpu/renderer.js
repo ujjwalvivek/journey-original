@@ -21,9 +21,13 @@ const UNIFORM_FLOATS = 120;
 const UNIFORM_BYTES = UNIFORM_FLOATS * 4;
 
 export class JourneyRenderer {
-    constructor(canvas, { onFatalError = () => {} } = {}) {
+    constructor(
+        canvas,
+        { onFatalError = () => {}, onCueChange = () => {} } = {},
+    ) {
         this.canvas = canvas;
         this.onFatalError = onFatalError;
+        this.onCueChange = onCueChange;
         this.destroyed = false;
         this.context = null;
         this.adapter = null;
@@ -71,6 +75,8 @@ export class JourneyRenderer {
         );
         this.travelRunning = true;
         this.travelSpeed = 1;
+        this.cueDwelling = false;
+        this.narrationDriven = false;
         this.feedbackAmount = 0.3;
         this.vignetteStrength = 1;
         this.captureTransition = {
@@ -468,6 +474,10 @@ export class JourneyRenderer {
         this.moodEngine.setIntensity(value);
     }
 
+    setPaletteInterpolation(mode) {
+        return this.moodEngine.setPaletteInterpolation(mode);
+    }
+
     setWeather(id) {
         this.weatherFront.setEnabled(false);
         return this.weatherEngine.setWeather(
@@ -530,7 +540,36 @@ export class JourneyRenderer {
     setAutoMood(enabled) {
         this.moodEngine.setAutoCycle(false);
         const cue = this.cueTimeline.setEnabled(enabled);
+        if (!enabled) {
+            this.cueDwelling = false;
+            this.setNarrationDriven(false);
+        }
         if (enabled) this.setMood(cue.moodId);
+    }
+
+    setNarrationDriven(enabled) {
+        this.narrationDriven = Boolean(enabled);
+        return this.cueTimeline.setNarrationDriven(this.narrationDriven);
+    }
+
+    completeNarrationCue(narrationId = "") {
+        if (!this.cueTimeline.enabled) return false;
+        return this.cueTimeline.completeNarration(narrationId);
+    }
+
+    releaseNarrationCue(narrationId = "") {
+        if (!this.cueTimeline.enabled) return false;
+        return this.cueTimeline.releaseNarration(narrationId);
+    }
+
+    skipNarrationCue(narrationId = "") {
+        if (!this.cueTimeline.enabled) return false;
+        const changed = this.cueTimeline.skipNarration(narrationId);
+        if (!changed) return false;
+        this.cueDwelling = false;
+        this.setMood(this.cueTimeline.current.moodId);
+        this.onCueChange(this.cueTimeline.current);
+        return true;
     }
 
     setMoodCycleSeconds(value) {
@@ -559,8 +598,16 @@ export class JourneyRenderer {
         this.clock.reset({ travelRunning: this.travelRunning });
         this.weatherClock.reset();
         const cue = this.cueTimeline.reset();
+        this.cueDwelling = false;
         if (this.cueTimeline.enabled) this.setMood(cue.moodId);
         this.clearFeedback();
+    }
+
+    resetNarrationScene() {
+        const cue = this.cueTimeline.reset();
+        this.cueDwelling = false;
+        this.setMood(cue.moodId);
+        return cue;
     }
 
     getStats() {
@@ -570,6 +617,9 @@ export class JourneyRenderer {
             height: this.canvas.height,
             renderBudgetScale: this.renderBudgetScale,
             travelRunning: this.travelRunning,
+            effectiveTravelRunning:
+                this.travelRunning && !this.cueDwelling,
+            narrationDriven: this.narrationDriven,
             travelSpeed: this.travelSpeed,
             motionLevel: this.clock.motionLevel,
             travelTime: this.clock.travelTime,
@@ -588,8 +638,13 @@ export class JourneyRenderer {
             authoredWeatherId: this.weatherEngine.authoredWeatherId,
             weather: this.resolvedWeather,
             cueId: this.cueTimeline.current.id,
+            narrationId: this.cueTimeline.current.narrationId,
+            dwellDuration: this.cueTimeline.current.dwellDuration,
+            dwellActive: this.cueDwelling,
             cueProgress: this.cueTimeline.elapsedInCue() / this.cueTimeline.current.duration,
             moodId: this.moodEngine.currentId,
+            moodTransitionProgress: this.moodEngine.getTransitionProgress(),
+            paletteInterpolation: this.moodEngine.paletteInterpolation,
             mood: this.resolvedMood,
         };
     }
@@ -752,7 +807,11 @@ export class JourneyRenderer {
             running: this.travelRunning,
             speed: this.travelSpeed,
         });
-        if (cueState.changed) this.setMood(cueState.cue.moodId, nowSeconds);
+        this.cueDwelling = cueState.dwelling;
+        if (cueState.changed) {
+            this.setMood(cueState.cue.moodId, nowSeconds);
+            this.onCueChange(cueState.cue);
+        }
         const sceneMood = this.moodEngine.update(nowSeconds);
         if (!this.weatherFrozen) this.weatherStateTime += delta;
         const frontState = this.weatherFrozen
@@ -775,7 +834,7 @@ export class JourneyRenderer {
             : 1;
         advanceSimulationClocks(this.clock, this.weatherClock, delta, {
             weatherFrozen: this.weatherFrozen,
-            travelRunning: this.travelRunning,
+            travelRunning: this.travelRunning && !cueState.dwelling,
             travelSpeed: this.travelSpeed * cueTravelScale,
             weather,
         });
