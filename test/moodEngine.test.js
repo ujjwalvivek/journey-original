@@ -60,6 +60,23 @@ test("mood intensity blends both palette and world structure", () => {
     assert.equal(state.fogDensity, 0.24);
 });
 
+test("palette interpolation is RGB by default and can resolve through OKLab", () => {
+    const rgbEngine = new MoodEngine(0);
+    rgbEngine.setMood("monsoon", 0);
+    const rgb = rgbEngine.update(4);
+
+    const oklabEngine = new MoodEngine(0);
+    assert.equal(oklabEngine.setPaletteInterpolation("oklab"), "oklab");
+    oklabEngine.setMood("monsoon", 0);
+    const oklab = oklabEngine.update(4);
+
+    assert.equal(rgb.paletteInterpolation, "rgb");
+    assert.equal(oklab.paletteInterpolation, "oklab");
+    assert.notDeepEqual(oklab.low, rgb.low);
+    assert.equal(oklab.cloudCoverage, rgb.cloudCoverage);
+    assert.equal(oklabEngine.setPaletteInterpolation("invalid"), "rgb");
+});
+
 test("transition groups resolve on independent schedules", () => {
     const engine = new MoodEngine(0);
     engine.setMood("monsoon", 0);
@@ -70,6 +87,16 @@ test("transition groups resolve on independent schedules", () => {
     assert.deepEqual(state.low, [0.035, 0.1, 0.12]);
     assert.ok(state.cloudCoverage > 0 && state.cloudCoverage < 0.2);
     assert.ok(state.fogDensity > 0 && state.fogDensity < 0.48);
+});
+
+test("mood transition progress exposes when the authored state has settled", () => {
+    const engine = new MoodEngine(0);
+    engine.setMood("monsoon", 0);
+
+    assert.equal(engine.getTransitionProgress(0), 0);
+    assert.ok(engine.getTransitionProgress(4) > 0);
+    assert.ok(engine.getTransitionProgress(4) < 1);
+    assert.equal(engine.getTransitionProgress(12), 1);
 });
 
 test("auto cycling advances to the next authored mood", () => {
