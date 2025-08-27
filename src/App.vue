@@ -6,6 +6,7 @@ import {
     AUTHORING_COLORS,
     AUTHORING_CONTROLS,
     MOODS,
+    PALETTE_INTERPOLATION_MODES,
 } from "./webgpu/moodEngine.js";
 import {
     LEGACY_WEATHER_KEYS,
@@ -56,9 +57,10 @@ const weatherFrontStage = ref("scene");
 const surfaceWetness = ref(0);
 const labMode = ref("weather");
 const moodIntensity = ref(1);
-const autoMood = ref(false);
+const autoMood = ref(true);
 const feedbackAmount = ref(0.3);
 const vignetteStrength = ref(1);
+const paletteInterpolation = ref("rgb");
 const fps = ref(0);
 const renderSize = ref("-");
 const renderScale = ref(1);
@@ -91,6 +93,7 @@ const trainVolume = ref(1);
 const musicVolume = ref(1);
 const voiceVolume = ref(1);
 const narrationEnabled = ref(false);
+const narrationSceneReady = ref(false);
 const narrationPlayback = ref({
     available: NARRATION_ASSETS.length > 0,
     state: "idle",
@@ -123,6 +126,7 @@ let showcaseRecorder = null;
 let showcaseAudioOutput = null;
 let showcaseAbortController = null;
 let showcasePreviousState = null;
+let narrationStartToken = 0;
 
 const travelLabel = computed(() =>
     travelRunning.value ? "STOP TRAIN" : "START TRAIN",
@@ -170,6 +174,12 @@ const soundActionLabel = computed(() => {
     if (soundState.value === "locked") return "ENABLE SOUND";
     return soundMuted.value ? "RESTORE SOUND" : "MUTE SOUND";
 });
+const narrationLabel = computed(() => {
+    if (!narrationPlayback.value.available) return "NO RECORDING INSTALLED";
+    if (narrationEnabled.value && !narrationSceneReady.value)
+        return "WARMING UP";
+    return narrationPlayback.value.title || "READY";
+});
 const captureStyle = computed(() => ({
     "--capture-left": `${captureGeometry.value.left}px`,
     "--capture-top": `${captureGeometry.value.top}px`,
@@ -187,16 +197,109 @@ function toggleTravel() {
     });
 }
 
-function resetJourney() {
+function scheduleNarrationTransitionCheck(callback) {
+    if (typeof window.requestAnimationFrame === "function")
+        window.requestAnimationFrame(callback);
+    else window.setTimeout(callback, 16);
+}
+
+function waitForMoodTransition(token) {
+    return new Promise((resolve) => {
+        const check = () => {
+            if (
+                token !== narrationStartToken ||
+                !narrationEnabled.value ||
+                soundState.value !== "ready"
+            ) {
+                resolve(false);
+                return;
+            }
+            if ((renderer?.getStats().moodTransitionProgress ?? 1) >= 1) {
+                resolve(true);
+                return;
+            }
+            scheduleNarrationTransitionCheck(check);
+        };
+        check();
+    });
+}
+
+async function startNarrationAfterMoodTransition(narrationId, token) {
+    if (!(await waitForMoodTransition(token))) return false;
+    const stats = renderer?.getStats();
+    if (!stats || stats.narrationId !== narrationId) return false;
+    narrationSceneReady.value = true;
+    return playCueNarration(stats);
+}
+
+function beginNarrationStart() {
+    if (!narrationEnabled.value) return;
+    narrationStartToken += 1;
+    narrationSceneReady.value = false;
+    if (!autoMood.value) {
+        autoMood.value = true;
+        renderer?.setAutoMood(true);
+    }
+    renderer?.setNarrationDriven(true);
     renderer?.resetJourney();
+    const narrationId = "narrative-1";
     narrationController
-        ?.reset({ restart: soundState.value === "ready" })
+        ?.reset({ restart: false, narrationId })
+        .catch((error) => {
+            console.error("Could not prepare narration:", error);
+            soundError.value = `Narration: ${
+                error instanceof Error ? error.message : String(error)
+            }`;
+        });
+    if (soundState.value !== "ready") return;
+    const token = narrationStartToken;
+    void startNarrationAfterMoodTransition(narrationId, token).catch(
+        (error) => {
+            console.error(
+                "Could not start narration after scene transition:",
+                error,
+            );
+            soundError.value = `Narration: ${
+                error instanceof Error ? error.message : String(error)
+            }`;
+        },
+    );
+}
+
+function resetJourney() {
+    narrationStartToken += 1;
+    const deferNarration =
+        narrationEnabled.value &&
+        autoMood.value &&
+        soundState.value === "ready";
+    if (deferNarration) renderer?.setNarrationDriven(true);
+    renderer?.resetJourney();
+    const narrationId = currentNarrationId();
+    narrationController
+        ?.reset({
+            restart: !deferNarration && soundState.value === "ready",
+            narrationId,
+        })
         .catch((error) => {
             console.error("Could not restart narration:", error);
             soundError.value = `Narration: ${
                 error instanceof Error ? error.message : String(error)
             }`;
         });
+    if (deferNarration) {
+        const token = narrationStartToken;
+        void startNarrationAfterMoodTransition(narrationId, token).catch(
+            (error) => {
+                console.error(
+                    "Could not start narration after scene transition:",
+                    error,
+                );
+                soundError.value = `Narration: ${
+                    error instanceof Error ? error.message : String(error)
+                }`;
+            },
+        );
+    }
 }
 
 async function toggleSound() {
@@ -211,13 +314,11 @@ async function toggleSound() {
             await soundEngine.unlock();
             soundMuted.value = false;
             soundEngine.setMuted(false);
-            if (initialActivation)
-                await narrationController?.play().catch((error) => {
-                    console.error("Could not start narration:", error);
-                    soundError.value = `Narration: ${
-                        error instanceof Error ? error.message : String(error)
-                    }`;
-                });
+            const timingActive =
+                narrationEnabled.value && autoMood.value;
+            renderer?.setNarrationDriven(timingActive);
+            if (initialActivation && narrationEnabled.value)
+                beginNarrationStart();
         } catch (error) {
             console.error(error);
             soundError.value =
@@ -265,8 +366,10 @@ async function restartCurrentScore() {
     if (soundState.value === "ready") await soundEngine?.restartScore();
 }
 
-function setNarrationEnabled(enabled) {
-    narrationEnabled.value = narrationController?.setEnabled(enabled) ?? enabled;
+async function setNarrationEnabled(enabled) {
+    const wasEnabled = narrationEnabled.value;
+    narrationEnabled.value =
+        narrationController?.setEnabled(enabled) ?? enabled;
     try {
         window.localStorage.setItem(
             "journey.narrationEnabled",
@@ -275,20 +378,69 @@ function setNarrationEnabled(enabled) {
     } catch {
         // Narration preference persistence is optional.
     }
+    if (!narrationEnabled.value) {
+        narrationStartToken += 1;
+        narrationSceneReady.value = false;
+        renderer?.setNarrationDriven(false);
+        return;
+    }
+    if (!wasEnabled) beginNarrationStart();
+}
+
+function currentNarrationId() {
+    const stats = renderer?.getStats();
+    if (autoMood.value && stats?.narrationId) return stats.narrationId;
+    return (
+        NARRATION_ASSETS.find(({ sceneId }) => sceneId === moodId.value)?.id ??
+        stats?.narrationId ??
+        narrationController?.getState().selectedId ??
+        "narrative-1"
+    );
+}
+
+async function playCueNarration(cue) {
+    if (
+        !cue?.narrationId ||
+        !narrationEnabled.value ||
+        soundState.value !== "ready"
+    )
+        return false;
+    try {
+        const started = await narrationController?.play(cue.narrationId);
+        if (!started && autoMood.value)
+            renderer?.releaseNarrationCue(cue.narrationId);
+        return started;
+    } catch (error) {
+        console.error("Could not start cue narration:", error);
+        if (autoMood.value)
+            renderer?.releaseNarrationCue(cue.narrationId);
+        soundError.value = `Narration: ${
+            error instanceof Error ? error.message : String(error)
+        }`;
+        return false;
+    }
 }
 
 async function playNarration() {
-    if (soundState.value !== "ready") return;
-    await narrationController?.play();
+    if (soundState.value !== "ready" || !narrationSceneReady.value) return;
+    if (autoMood.value && narrationEnabled.value)
+        renderer?.setNarrationDriven(true);
+    await narrationController?.play(currentNarrationId());
 }
 
 async function replayNarration() {
-    if (soundState.value !== "ready") return;
+    if (soundState.value !== "ready" || !narrationSceneReady.value) return;
+    if (autoMood.value && narrationEnabled.value)
+        renderer?.setNarrationDriven(true);
     await narrationController?.replay();
 }
 
 function skipNarration() {
-    narrationController?.skip();
+    const narrationId = renderer?.getStats().narrationId;
+    const stopped = narrationController?.skip();
+    if (stopped) soundEngine?.stopTrigger("weather-monsoon");
+    if (stopped && autoMood.value && narrationEnabled.value)
+        renderer?.skipNarrationCue(narrationId);
 }
 
 function formatNarrationTime(seconds) {
@@ -952,9 +1104,21 @@ watch(weatherFrontId, (value) => renderer?.setWeatherFront(value));
 watch(weatherFrontEnabled, (value) => renderer?.setWeatherFrontEnabled(value));
 watch(weatherFrozen, (value) => renderer?.setWeatherFrozen(value));
 watch(weatherQuality, (value) => renderer?.setWeatherQuality(value));
-watch(autoMood, (value) => renderer?.setAutoMood(value));
+watch(autoMood, (value) => {
+    renderer?.setAutoMood(value);
+    if (!value) {
+        narrationStartToken += 1;
+        narrationSceneReady.value = false;
+    }
+    const timingActive =
+        value && narrationEnabled.value && soundState.value === "ready";
+    renderer?.setNarrationDriven(timingActive);
+});
 watch(feedbackAmount, (value) => renderer?.setFeedbackAmount(value));
 watch(vignetteStrength, (value) => renderer?.setVignetteStrength(value));
+watch(paletteInterpolation, (value) =>
+    renderer?.setPaletteInterpolation(value),
+);
 watch(soundVolume, (value) => {
     soundEngine?.setMasterVolume(value);
     try {
@@ -1000,6 +1164,10 @@ onMounted(async () => {
             onLayerError({ label, message }) {
                 soundError.value = `${label}: ${message}`;
             },
+            onNarrationComplete({ id }) {
+                if (narrationEnabled.value && autoMood.value)
+                    renderer?.completeNarrationCue(id);
+            },
         });
         soundEngine.setMasterVolume(soundVolume.value);
         soundEngine.setBusVolume("environment", environmentVolume.value);
@@ -1023,6 +1191,9 @@ onMounted(async () => {
             onFatalError(error) {
                 showRendererError(error);
             },
+            onCueChange(cue) {
+                void playCueNarration(cue);
+            },
         });
         await renderer.init();
         renderer.setTravelRunning(travelRunning.value);
@@ -1035,8 +1206,14 @@ onMounted(async () => {
         renderer.setWeatherFrozen(weatherFrozen.value);
         renderer.setWeatherQuality(weatherQuality.value);
         renderer.setAutoMood(autoMood.value);
+        renderer.setNarrationDriven(
+            autoMood.value &&
+                narrationEnabled.value &&
+                soundState.value === "ready",
+        );
         renderer.setFeedbackAmount(feedbackAmount.value);
         renderer.setVignetteStrength(vignetteStrength.value);
+        renderer.setPaletteInterpolation(paletteInterpolation.value);
         const openingTitleBitmap = await createShowcaseTitleBitmap();
         renderer.setCaptureImage(openingTitleBitmap);
         openingTitleBitmap.close?.();
@@ -1487,6 +1664,27 @@ onBeforeUnmount(() => {
                                     ><strong>{{ renderSize }}</strong></span
                                 >
                             </div>
+                            <div class="select-row">
+                                <span>Palette interpolation</span>
+                                <div
+                                    class="palette-interpolation-selector"
+                                    role="radiogroup"
+                                    aria-label="Palette interpolation"
+                                >
+                                    <button
+                                        v-for="mode in PALETTE_INTERPOLATION_MODES"
+                                        :key="mode.id"
+                                        type="button"
+                                        role="radio"
+                                        :aria-checked="
+                                            paletteInterpolation === mode.id
+                                        "
+                                        @click="paletteInterpolation = mode.id"
+                                    >
+                                        {{ mode.name }}
+                                    </button>
+                                </div>
+                            </div>
                             <label class="switch-label preview-switch">
                                 <input
                                     type="checkbox"
@@ -1895,11 +2093,7 @@ onBeforeUnmount(() => {
                                             <div class="narration-heading">
                                                 <span>
                                                     <small>NARRATION</small>
-                                                    <strong>{{
-                                                        narrationPlayback.available
-                                                            ? narrationPlayback.title || "READY"
-                                                            : "NO RECORDING INSTALLED"
-                                                    }}</strong>
+                                                    <strong>{{ narrationLabel }}</strong>
                                                 </span>
                                                 <label class="narration-switch">
                                                     <input
@@ -1932,6 +2126,7 @@ onBeforeUnmount(() => {
                                                     :disabled="
                                                         !narrationPlayback.available ||
                                                         !narrationEnabled ||
+                                                        !narrationSceneReady ||
                                                         soundState !== 'ready'
                                                     "
                                                     @click="playNarration"
@@ -1941,6 +2136,7 @@ onBeforeUnmount(() => {
                                                     :disabled="
                                                         !narrationPlayback.available ||
                                                         !narrationEnabled ||
+                                                        !narrationSceneReady ||
                                                         soundState !== 'ready'
                                                     "
                                                     @click="replayNarration"

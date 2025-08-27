@@ -457,6 +457,34 @@ canvas {
     font-variant-numeric: tabular-nums;
 }
 
+.palette-interpolation-selector {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border: 1px solid rgba(255, 226, 208, 0.18);
+    background: rgba(20, 13, 14, 0.32);
+}
+
+.palette-interpolation-selector button {
+    min-height: 31px;
+    border: 0;
+    border-right: 1px solid rgba(255, 226, 208, 0.14);
+    color: rgba(255, 232, 217, 0.58);
+    background: transparent;
+    font: inherit;
+    letter-spacing: 0.09em;
+    cursor: pointer;
+}
+
+.palette-interpolation-selector button:last-child {
+    border-right: 0;
+}
+
+.palette-interpolation-selector button[aria-checked="true"] {
+    color: #fff4ec;
+    background: rgba(255, 112, 66, 0.16);
+    box-shadow: inset 0 -2px #ff7042;
+}
+
 .sound-system {
     margin-top: 17px;
     padding-top: 13px;
