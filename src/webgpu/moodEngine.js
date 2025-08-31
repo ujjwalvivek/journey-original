@@ -46,9 +46,9 @@ export const SCENE_DEFAULT_WEATHER = Object.freeze({
     departure: "clear",
     ember: "clear",
     "blue-hour": "haze",
-    sakura: "clear",
+    sakura: "snowfall",
     monsoon: "monsoon",
-    "night-rail": "haze",
+    "night-rail": "distant-storm",
 });
 
 export const AUTHORING_COLORS = Object.freeze([
