@@ -28,6 +28,12 @@ export function advanceSimulationClocks(
         gustTime: weatherClock.gustTime,
         gustValue: weatherClock.gustValue,
         mistTime: weatherClock.mistTime,
+        snowTime: weatherClock.snowTime,
+        snowCover: weatherClock.snowCover,
         surfaceWetness: weatherClock.surfaceWetness,
+        lightningPulse: weatherClock.lightningPulse,
+        lightningEventId: weatherClock.lightningEventId,
+        lightningStrikeX: weatherClock.lightningStrikeX,
+        thunderDelay: weatherClock.thunderDelay,
     };
 }
