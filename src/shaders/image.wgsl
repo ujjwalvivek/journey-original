@@ -31,6 +31,8 @@ struct Uniforms {
   captureFrame: vec4f, // normalized x padding, y padding, footer, rotation
   captureTransition: vec4f, // progress, active, dissolve softness, backdrop
   showcaseTitle: vec4f, // progress, active, reserved, reserved
+  weatherEffects: vec4f, // x snowfall, y lightning, z sky-edge glow, w snow time
+  weatherAccumulation: vec4f, // x accumulated snow cover, yzw reserved
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;

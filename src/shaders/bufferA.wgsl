@@ -27,7 +27,12 @@ struct Uniforms {
   weatherTimes: vec4f, // x weather, y precipitation, z gust, w mist
   weatherSurface: vec4f, // x light scatter, y drying rate, z rain quality, w smoke age
   weatherDetail: vec4f, // x desaturation, y rain depth, z rain contrast, w foreground rain
+  captureRect: vec4f,
+  captureFrame: vec4f,
+  captureTransition: vec4f,
   showcaseTitle: vec4f,
+  weatherEffects: vec4f, // x snowfall, y lightning, z sky-edge glow, w snow time
+  weatherAccumulation: vec4f, // x accumulated snow cover, yzw reserved
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -203,6 +208,79 @@ fn livingGust(uv: vec2f) -> f32 {
   return strength * (0.35 + broadWave * 0.65) * spatialVariation;
 }
 
+fn snowField(
+  uv: vec2f,
+  time: f32,
+  columns: f32,
+  rows: f32,
+  density: f32,
+  radius: f32,
+  fallSpeed: f32,
+  windDrift: f32,
+  seed: f32
+) -> f32 {
+  let scale = vec2f(columns, rows);
+  let drift = windDrift * time * (0.016 + fallSpeed * 0.012);
+  let fieldUv = vec2f(uv.x - drift, uv.y + time * fallSpeed);
+  let field = fieldUv * scale;
+  let cell = floor(field);
+  let random = hashRain(cell, seed);
+  let enabled = 1.0 - step(clamp(density, 0.0, 0.999), random.y);
+  let flutter = sin(time * (1.4 + random.x * 1.8) + random.y * 6.28318) *
+    radius * 1.7;
+  let centerInCell = vec2f(0.18 + random.x * 0.64, 0.18 + random.y * 0.64);
+  let centerUv = (cell + centerInCell) / scale + vec2f(flutter, 0.0);
+  let distance = length(fieldUv - centerUv);
+  let sphere = 1.0 - smoothstep(radius * 0.68, radius, distance);
+  let softEdge = 1.0 - smoothstep(radius, radius * 1.32, distance);
+  return enabled * max(sphere, softEdge * 0.22);
+}
+
+// A union of round deposits anchored directly to a supplied surface. Unlike
+// a displaced height strip, separate neighbouring cells leave irregular gaps
+// and build recognisable clumps. Clipping below zero turns each sphere into a
+// cap resting on the geometry rather than a shape floating above it.
+fn snowDeposits(
+  x: f32,
+  surfaceDepth: f32,
+  cover: f32,
+  cells: f32,
+  seed: f32
+) -> f32 {
+  if (cover <= 0.001 || surfaceDepth < 0.0) { return 0.0; }
+  let scaledX = x * cells;
+  let baseCell = floor(scaledX);
+  var result = 0.0;
+  var offset = -1;
+  loop {
+    if (offset > 1) { break; }
+    let cell = baseCell + f32(offset);
+    let random = hashRain(vec2f(cell, seed), seed + 19.7);
+    let centerX = (cell + 0.18 + random.x * 0.64) / cells;
+    let fullRadius = 0.0015 + random.y * 0.0042;
+    let radius = max(0.00005, fullRadius * smoothstep(0.0, 0.72, cover));
+    let distance = length(vec2f(x - centerX, surfaceDepth)) / radius;
+    let blob = 1.0 - smoothstep(0.72, 1.0, distance);
+    result = max(result, blob);
+    offset += 1;
+  }
+  return result * smoothstep(0.0, 0.045, cover);
+}
+
+fn lightningProfile(time: f32, intensity: f32) -> vec2f {
+  let strength = clamp(intensity, 0.0, 1.0);
+  let cycleLength = 10.0;
+  let cycle = floor(max(time, 0.0) / cycleLength);
+  let phase = max(time, 0.0) - cycle * cycleLength;
+  let strikeAt = 1.2 + fract(sin((cycle + 17.3) * 91.7) * 43758.5453) * 6.8;
+  let strikeX = 0.16 + fract(sin((cycle + 43.1) * 91.7) * 43758.5453) * 0.68;
+  let distance = phase - strikeAt;
+  let primary = exp(-abs(distance) * 32.0);
+  let echo = exp(-abs(distance - 0.18) * 28.0) * 0.52;
+  let afterglow = select(0.0, exp(-distance * 2.8) * 0.18, distance >= 0.0);
+  return vec2f(strength * min(1.0, primary + echo + afterglow), strikeX);
+}
+
 fn cloudCoordinates(uv: vec2f, time: f32, distance: f32, offset: f32) -> vec2f {
   // Scale the noise field isotropically around a stable screen-space anchor.
   // This changes cloud feature size without stretching the composed image.
@@ -233,6 +311,15 @@ fn cloudLayer(t: f32, alpha: f32) -> vec4f {
   return vec4f(cloudTone(t), alpha);
 }
 
+struct BackgroundSample {
+  color: vec3f,
+  cloud: f32,
+};
+
+fn backgroundCloud(t: f32) -> BackgroundSample {
+  return BackgroundSample(cloudTone(t), 1.0);
+}
+
 fn foreground(uvIn: vec2f, t: f32) -> vec4f {
   var uv = uvIn;
   uv.y -= uniforms.atmosphere.y;
@@ -260,7 +347,7 @@ fn foreground(uvIn: vec2f, t: f32) -> vec4f {
   return cloudLayer(0.96, 0.0);
 }
 
-fn background(uvIn: vec2f, t: f32) -> vec4f {
+fn background(uvIn: vec2f, t: f32) -> BackgroundSample {
   var uv = uvIn;
   uv.y -= uniforms.atmosphere.y;
   var midlevel = 0.3;
@@ -268,108 +355,108 @@ fn background(uvIn: vec2f, t: f32) -> vec4f {
   var dist = 10.0;
   var uv2 = cloudCoordinates(uv, t, dist, 32.5);
   var h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.14) { return cloudLayer(0.24, 1.0); }
-  if (uv.y < h + midlevel - 0.10) { return cloudLayer(0.42, 1.0); }
-  if (uv.y < h + midlevel - 0.07) { return cloudLayer(0.58, 1.0); }
-  if (uv.y < h + midlevel)        { return cloudLayer(0.68, 1.0); }
+  if (uv.y < h + midlevel - 0.14) { return backgroundCloud(0.24); }
+  if (uv.y < h + midlevel - 0.10) { return backgroundCloud(0.42); }
+  if (uv.y < h + midlevel - 0.07) { return backgroundCloud(0.58); }
+  if (uv.y < h + midlevel)        { return backgroundCloud(0.68); }
 
   midlevel = 0.35;
   disp = 1.0;
   dist = 15.0;
   uv2 = cloudCoordinates(uv, t, dist, 30.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.04) { return cloudLayer(0.86, 1.0); }
-  if (uv.y < h + midlevel)        { return cloudLayer(0.96, 1.0); }
+  if (uv.y < h + midlevel - 0.04) { return backgroundCloud(0.86); }
+  if (uv.y < h + midlevel)        { return backgroundCloud(0.96); }
 
   midlevel = 0.35;
   disp = 3.5;
   dist = 20.0;
   uv2 = cloudCoordinates(uv, t, dist, 27.5);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.12) { return cloudLayer(0.04, 1.0); }
-  if (uv.y < h + midlevel - 0.08) { return cloudLayer(0.14, 1.0); }
-  if (uv.y < h + midlevel - 0.04) { return cloudLayer(0.24, 1.0); }
-  if (uv.y < h + midlevel)        { return cloudLayer(0.34, 1.0); }
+  if (uv.y < h + midlevel - 0.12) { return backgroundCloud(0.04); }
+  if (uv.y < h + midlevel - 0.08) { return backgroundCloud(0.14); }
+  if (uv.y < h + midlevel - 0.04) { return backgroundCloud(0.24); }
+  if (uv.y < h + midlevel)        { return backgroundCloud(0.34); }
 
   midlevel = 0.45;
   disp = 2.0;
   dist = 25.0;
   uv2 = cloudCoordinates(uv, t, dist, 23.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.04) { return cloudLayer(0.68, 1.0); }
-  if (uv.y < h + midlevel)        { return cloudLayer(0.78, 1.0); }
+  if (uv.y < h + midlevel - 0.04) { return backgroundCloud(0.68); }
+  if (uv.y < h + midlevel)        { return backgroundCloud(0.78); }
 
   midlevel = 0.5;
   disp = 2.3;
   dist = 30.0;
   uv2 = cloudCoordinates(uv, t, dist, 20.5);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.12) { return cloudLayer(0.02, 1.0); }
-  if (uv.y < h + midlevel - 0.08) { return cloudLayer(0.12, 1.0); }
-  if (uv.y < h + midlevel - 0.04) { return cloudLayer(0.46, 1.0); }
-  if (uv.y < h + midlevel)        { return cloudLayer(0.62, 1.0); }
+  if (uv.y < h + midlevel - 0.12) { return backgroundCloud(0.02); }
+  if (uv.y < h + midlevel - 0.08) { return backgroundCloud(0.12); }
+  if (uv.y < h + midlevel - 0.04) { return backgroundCloud(0.46); }
+  if (uv.y < h + midlevel)        { return backgroundCloud(0.62); }
 
   midlevel = 0.5;
   disp = 2.5;
   dist = 35.0;
   uv2 = cloudCoordinates(uv, t, dist, 18.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.10) { return cloudLayer(0.52, 1.0); }
-  if (uv.y < h + midlevel - 0.05) { return cloudLayer(0.64, 1.0); }
-  if (uv.y < h + midlevel)        { return cloudLayer(0.73, 1.0); }
+  if (uv.y < h + midlevel - 0.10) { return backgroundCloud(0.52); }
+  if (uv.y < h + midlevel - 0.05) { return backgroundCloud(0.64); }
+  if (uv.y < h + midlevel)        { return backgroundCloud(0.73); }
 
   midlevel = 0.6;
   disp = 2.0;
   dist = 40.0;
   uv2 = cloudCoordinates(uv, t, dist, 18.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.10) { return cloudLayer(0.72, 1.0); }
-  if (uv.y < h + midlevel)        { return cloudLayer(0.84, 1.0); }
+  if (uv.y < h + midlevel - 0.10) { return backgroundCloud(0.72); }
+  if (uv.y < h + midlevel)        { return backgroundCloud(0.84); }
 
   midlevel = 0.75;
   disp = 3.5;
   dist = 45.0;
   uv2 = cloudCoordinates(uv, t, dist, 15.5);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.20) { return cloudLayer(0.7, 1.0); }
-  if (uv.y < h + midlevel - 0.15) { return cloudLayer(0.62, 1.0); }
-  if (uv.y < h + midlevel - 0.10) { return cloudLayer(0.58, 1.0); }
-  if (uv.y < h + midlevel)        { return cloudLayer(0.78, 1.0); }
+  if (uv.y < h + midlevel - 0.20) { return backgroundCloud(0.7); }
+  if (uv.y < h + midlevel - 0.15) { return backgroundCloud(0.62); }
+  if (uv.y < h + midlevel - 0.10) { return backgroundCloud(0.58); }
+  if (uv.y < h + midlevel)        { return backgroundCloud(0.78); }
 
   midlevel = 0.7;
   disp = 2.7;
   dist = 50.0;
   uv2 = cloudCoordinates(uv, t, dist, 12.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.04) { return cloudLayer(0.32, 1.0); }
-  if (uv.y < h + midlevel)        { return cloudLayer(0.42, 1.0); }
+  if (uv.y < h + midlevel - 0.04) { return backgroundCloud(0.32); }
+  if (uv.y < h + midlevel)        { return backgroundCloud(0.42); }
 
   midlevel = 0.8;
   disp = 2.7;
   dist = 60.0;
   uv2 = cloudCoordinates(uv, t, dist, 9.5);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.10) { return cloudLayer(0.66, 1.0); }
-  if (uv.y < h + midlevel)        { return cloudLayer(0.84, 1.0); }
+  if (uv.y < h + midlevel - 0.10) { return backgroundCloud(0.66); }
+  if (uv.y < h + midlevel)        { return backgroundCloud(0.84); }
 
   midlevel = 0.9;
   disp = 3.0;
   dist = 70.0;
   uv2 = cloudCoordinates(uv, t, dist, 7.0);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.10) { return cloudLayer(0.14, 1.0); }
-  if (uv.y < h + midlevel - 0.05) { return cloudLayer(0.22, 1.0); }
-  if (uv.y < h + midlevel)        { return cloudLayer(0.34, 1.0); }
+  if (uv.y < h + midlevel - 0.10) { return backgroundCloud(0.14); }
+  if (uv.y < h + midlevel - 0.05) { return backgroundCloud(0.22); }
+  if (uv.y < h + midlevel)        { return backgroundCloud(0.34); }
 
   midlevel = 1.0;
   disp = 5.0;
   dist = 100.0;
   uv2 = cloudCoordinates(uv, t, dist, 3.5);
   h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.10) { return cloudLayer(0.9, 1.0); }
-  if (uv.y < h + midlevel)        { return cloudLayer(1.0, 1.0); }
+  if (uv.y < h + midlevel - 0.10) { return backgroundCloud(0.9); }
+  if (uv.y < h + midlevel)        { return backgroundCloud(1.0); }
 
-  return vec4f(uniforms.sceneSky.rgb, 1.0);
+  return BackgroundSample(uniforms.sceneSky.rgb, 0.0);
 }
 
 fn applyMoodPalette(colIn: vec3f, uv: vec2f) -> vec3f {
@@ -398,8 +485,10 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let foregroundT = uniforms.foregroundTime;
   let cloudT = uniforms.travelTime * 3.4 + uniforms.subject.w * 0.6;
   let bg = background(uv, cloudT);
+  let weatherUv = uv;
 
   let precipitation = clamp(uniforms.weatherPrecipitation.x, 0.0, 1.0);
+  let snowfall = clamp(uniforms.weatherEffects.x, 0.0, 1.0);
   let rainDensity = clamp(uniforms.weatherPrecipitation.y, 0.0, 1.0);
   let rainOccupancy = 1.0 - (1.0 - rainDensity) * (1.0 - rainDensity * 0.65);
   let downpour = smoothstep(0.58, 0.95, rainDensity);
@@ -409,6 +498,9 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let foregroundRainAmount = clamp(uniforms.weatherDetail.w, 0.0, 1.0);
   let windDirection = clamp(uniforms.weatherDynamics.y, -1.0, 1.0);
   let gustStrength = livingGust(uv);
+  let snowWind = windDirection *
+    (0.45 + uniforms.motion.x * 0.24 + gustStrength * 0.34);
+  let snowOccupancy = 0.025 + snowfall * snowfall * 0.26;
   let rainSlant = clamp(
     uniforms.weatherDynamics.x * 0.52 +
     windDirection * (0.09 + gustStrength * 0.16),
@@ -435,6 +527,20 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let distantRain = clamp(distantRainPrimary + distantRainFill, 0.0, 1.0) *
     precipitation * 0.13 * (1.0 - rainDepthBias * 0.28) * rainContrast *
     clamp(uniforms.weatherAtmosphere.x + 0.22, 0.0, 1.0);
+  var distantSnow = 0.0;
+  if (snowfall > 0.001) {
+    distantSnow = snowField(
+      weatherUv,
+      uniforms.weatherEffects.w,
+      112.0,
+      48.0,
+      snowOccupancy * 0.72,
+      0.0009,
+      0.11,
+      snowWind * 0.42,
+      67.3
+    ) * snowfall;
+  }
 
   var fg = vec4f(0.0);
   let n = 5;
@@ -459,7 +565,28 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   }
 
   let distantRainColor = mix(uniforms.fogColor.rgb, uniforms.cloudLight.rgb, 0.42);
-  var col = mix(bg.rgb, distantRainColor, distantRain);
+  var col = mix(bg.color, distantRainColor, distantRain);
+  let snowColor = mix(uniforms.fogColor.rgb, uniforms.cloudLight.rgb, 0.72);
+  col = mix(col, snowColor, distantSnow * 0.42);
+
+  // Backlight only the final silhouette that actually meets open sky. The
+  // background sampler carries this one edge independently from every other
+  // cloud band, so internal contours cannot acquire a hot outline.
+  // The derivative is taken from the final binary cloud/sky result, so it
+  // follows the visible skyline regardless of which procedural band forms it.
+  // Internal colour steps remain invisible to this mask.
+  let visibleSkyEdge = clamp(fwidth(bg.cloud), 0.0, 1.0);
+  let skyEdgeGlow = clamp(uniforms.weatherEffects.z, 0.0, 1.0) * visibleSkyEdge;
+  let horizonGlowColor = mix(uniforms.sceneSky.rgb, uniforms.cloudLight.rgb, 0.62);
+  col = mix(col, horizonGlowColor, skyEdgeGlow * 0.3);
+
+  // Lightning is a remote source behind the cloud field: a broad, irregular
+  // illumination and a restrained second pulse, never a drawn bolt.
+  let lightning = lightningProfile(
+    uniforms.weatherTimes.x,
+    uniforms.weatherEffects.y
+  );
+  let lightningColor = mix(uniforms.cloudLight.rgb, vec3f(1.0), 0.22);
   uv.y -= 0.2;
 
   // The world itself performs the opening: the bridge rises with a slight
@@ -533,6 +660,9 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
 
   let trainLift = uniforms.subject.x;
   let surfaceWetness = clamp(uniforms.weatherDynamics.w, 0.0, 1.0);
+  let snowCover = clamp(uniforms.weatherAccumulation.x, 0.0, 1.0);
+  let snowPresence = smoothstep(0.0, 0.025, snowCover);
+  let snowSurfaceColor = mix(uniforms.fogColor.rgb, uniforms.cloudLight.rgb, 0.82);
   let wetMaterialDarkening = 1.0 - surfaceWetness * 0.16;
   let trainDark = uniforms.trainDarkColor.rgb * wetMaterialDarkening *
     (1.0 + clamp(trainLift, 0.0, 1.0) * 0.12);
@@ -616,6 +746,32 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let roofEdgeCore = roofEdgeRegion *
     (1.0 - smoothstep(0.00018, 0.00062, abs(trainUv.y - 0.11645)));
   let roofEdgeBloom = roofEdgeRegion * exp(-abs(trainUv.y - 0.11645) * 760.0);
+  let carriageSnowSpan = trainPresence * (1.0 - step(0.45, trainUv.x)) *
+    step(0.075, uv2.x) * (1.0 - step(0.925, uv2.x));
+  let carriageSnow = carriageSnowSpan * snowDeposits(
+    trainUv.x,
+    trainUv.y - 0.117,
+    snowCover,
+    112.0,
+    81.3
+  );
+  let locomotiveSnowSpan = smoothstep(0.442, 0.446, trainUv.x) *
+    (1.0 - smoothstep(0.468, 0.471, trainUv.x));
+  let locomotiveSnow = locomotiveSnowSpan * snowDeposits(
+    trainUv.x,
+    trainUv.y - 0.117,
+    snowCover,
+    126.0,
+    29.7
+  );
+  let trainSnow = snowPresence * trainPresence *
+    clamp(carriageSnow + locomotiveSnow, 0.0, 1.0);
+  col = mix(col, snowSurfaceColor, trainSnow * 0.9);
+  let lightningTrainSurface = clamp(
+    roof + locoRoof + chem2 + (wagon + loco + join) * 0.28,
+    0.0,
+    1.0
+  );
   // Wet response must sit on the same physical edge as the roof light. A
   // lower parallel line read as detached scattering, while the previous
   // locomotive mask extended the highlight across the whole engine.
@@ -756,7 +912,47 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
     (bridgeWetCurve * 0.54 + bridgeWetDeck * 0.76);
   let bridgeBase = uniforms.bridgeColor.rgb * wetMaterialDarkening *
     (1.0 + bridgeLift * 0.3);
+  // Lay the snow bank down before drawing the bridge. The deck can then
+  // occlude its lower edge, and every pillar/hanger/cable naturally remains
+  // in front instead of being painted over by a late snow composite.
+  let bridgeDeckSnowDepth = bridgeUv.y - 0.0992;
+  let bridgeSnowDeck = snowDeposits(
+    uv2.x,
+    bridgeDeckSnowDepth,
+    snowCover,
+    74.0,
+    12.4
+  );
+  col = mix(
+    col,
+    snowSurfaceColor,
+    snowPresence * bridgeLift *
+      smoothstep(0.06, 0.58, bridgeSnowDeck) * 0.96
+  );
   col = mix(bridgeBase * smoothstep(-0.08, 0.08, bridgeUv.y), col, k);
+  let bridgeCurveSnowDepth = bridgeUv.y - bridgeDeckY;
+  let bridgeSnowCurve = snowDeposits(
+    uv2.x,
+    bridgeCurveSnowDepth,
+    snowCover,
+    82.0,
+    47.8
+  );
+  let pillarSnowDepth = bridgeUv.y - 0.176;
+  let pillarSnowSpan = 1.0 - smoothstep(0.01, 0.024, pillarDistance);
+  let bridgeSnowCaps = pillarSnowSpan * snowDeposits(
+    uv2.x,
+    pillarSnowDepth,
+    snowCover,
+    92.0,
+    72.1
+  );
+  let bridgeSnow = snowPresence * bridgeLift * clamp(
+    bridgeSnowCurve + bridgeSnowCaps,
+    0.0,
+    1.0
+  );
+  col = mix(col, snowSurfaceColor, smoothstep(0.06, 0.58, bridgeSnow) * 0.96);
 
   // Physical atmosphere is resolved independently from the authored scene.
   // It sits in front of the distant world and subjects, but behind the
@@ -812,6 +1008,22 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let rainLightColor = mix(uniforms.fogColor.rgb, uniforms.practicalLightColor.rgb, 0.18);
   col = mix(col, rainLightColor, middleRain);
 
+  var middleSnow = 0.0;
+  if (snowfall > 0.001) {
+    middleSnow = snowField(
+      weatherUv + vec2f(0.019, 0.011),
+      uniforms.weatherEffects.w,
+      86.0,
+      34.0,
+      snowOccupancy,
+      0.0017,
+      0.17,
+      snowWind * 0.72,
+      91.7
+    ) * snowfall;
+  }
+  col = mix(col, snowColor, middleSnow * 0.62 * (1.0 - atmosphericVeil * 0.24));
+
   col = mix(col, fg.rgb, fg.a);
 
   let moodUv = fragCoord / uniforms.resolution;
@@ -843,6 +1055,21 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
     precipitation * 0.28 * foregroundRainAmount *
     (1.0 + rainDepthBias * 0.5) * rainContrast;
   col = mix(col, mix(rainLightColor, uniforms.cloudLight.rgb, 0.16), foregroundRain);
+  var foregroundSnow = 0.0;
+  if (snowfall > 0.001) {
+    foregroundSnow = snowField(
+      weatherUv + vec2f(0.037, 0.026),
+      uniforms.weatherEffects.w,
+      58.0,
+      24.0,
+      snowOccupancy * 0.74,
+      0.0032,
+      0.25,
+      snowWind,
+      124.9
+    ) * snowfall;
+  }
+  col = mix(col, mix(snowColor, uniforms.cloudLight.rgb, 0.28), foregroundSnow * 0.84);
   col = (col - vec3f(0.5)) * uniforms.motion.w + vec3f(0.5);
   col *= uniforms.grade.w;
   col = applyMoodPalette(col, moodUv);
@@ -913,6 +1140,38 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   col += waterSpecularColor * wetSurfaceSpecular * (0.12 + moistureScatter * 0.12);
   col += scatterLightColor * brokenWindowReflection * wetSurfaceVisibility *
     (0.08 + moistureScatter * 0.12);
+
+  // Resolve lightning after temporal feedback so a brief flash cannot leave
+  // contour-shaped ghosts. The visibility masks illuminate only the existing
+  // background-cloud pixels and exposed train surfaces; no synthetic line or
+  // gradient is introduced into the sky.
+  let trainGeometry = clamp(
+    join + wagon + roof + loco + chem1 + chem2 + locoRoof + wheel,
+    0.0,
+    1.0
+  );
+  let cloudFlashVisibility = bg.cloud * (1.0 - fg.a) * k *
+    (1.0 - trainGeometry);
+  let trainFlashVisibility = lightningTrainSurface * (1.0 - fg.a) * k;
+  let strikeDelta = vec2f(
+    (screenUv.x - lightning.y) / 0.5,
+    (screenUv.y - 0.76) / 0.62
+  );
+  let behindCloudSource = exp(-dot(strikeDelta, strikeDelta) * 0.82);
+  let cloudTransmission = 0.24 + 0.76 * fbm(
+    vec2f(
+      weatherUv.x * 2.35 + lightning.y * 4.1,
+      weatherUv.y * 2.8 + 13.7
+    ),
+    4
+  );
+  let cloudFlash = lightning.x * cloudFlashVisibility *
+    behindCloudSource * cloudTransmission * 0.28;
+  let trainFlash = lightning.x * trainFlashVisibility * 0.16;
+  // Add light instead of replacing cloud colour. This preserves every authored
+  // cloud tone and shadow during the flash rather than flattening the complete
+  // cloud mass into one solid patch.
+  col += lightningColor * (cloudFlash + trainFlash);
 
   return vec4f(col, 1.0);
 }
