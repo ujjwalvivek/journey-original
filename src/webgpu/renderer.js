@@ -17,7 +17,7 @@ import { WeatherFront } from "../weather/weatherFront.js";
 import { advanceSimulationClocks } from "../weather/weatherSimulation.js";
 
 const BUFFER_FORMAT = "rgba16float";
-const UNIFORM_FLOATS = 120;
+const UNIFORM_FLOATS = 128;
 const UNIFORM_BYTES = UNIFORM_FLOATS * 4;
 
 export class JourneyRenderer {
@@ -630,7 +630,13 @@ export class JourneyRenderer {
             gustTime: this.weatherClock.gustTime,
             gust: this.weatherClock.gustValue,
             mistTime: this.weatherClock.mistTime,
+            snowTime: this.weatherClock.snowTime,
+            snowCover: this.weatherClock.snowCover,
             surfaceWetness: this.weatherClock.surfaceWetness,
+            lightningPulse: this.weatherClock.lightningPulse,
+            lightningEventId: this.weatherClock.lightningEventId,
+            lightningStrikeX: this.weatherClock.lightningStrikeX,
+            thunderDelay: this.weatherClock.thunderDelay,
             weatherFrozen: this.weatherFrozen,
             weatherQuality: this.weatherQuality,
             weatherFront: this.weatherFront.getState(),
@@ -774,6 +780,14 @@ export class JourneyRenderer {
         this.uniformData[117] = this.showcaseTitle.active ? 1 : 0;
         this.uniformData[118] = 0;
         this.uniformData[119] = 0;
+        this.uniformData[120] = mood.snowfall;
+        this.uniformData[121] = mood.lightning;
+        this.uniformData[122] = mood.horizonGlow;
+        this.uniformData[123] = this.weatherClock.snowTime;
+        this.uniformData[124] = this.weatherClock.snowCover;
+        this.uniformData[125] = 0;
+        this.uniformData[126] = 0;
+        this.uniformData[127] = 0;
 
         this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
     }
