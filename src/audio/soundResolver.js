@@ -112,6 +112,7 @@ export function resolveSoundState(
             rail: speedEnergy,
             "train-transition": 1,
             "weather-transition": 1,
+            thunder: 1,
             "music-calm": score.calm * musicWeatherGain,
             "music-melancholic": score.melancholic * musicWeatherGain,
             "music-ominous": score.ominous * musicWeatherGain,

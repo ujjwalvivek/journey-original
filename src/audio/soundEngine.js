@@ -118,6 +118,8 @@ export class SoundEngine {
         this.triggerGeneration = new Map();
         this.manualAuditionToken = 0;
         this.layerInstance = 0;
+        this.lastLightningEventId = null;
+        this.pendingWeatherTimers = new Set();
         this.unlockPromise = null;
         this.destroyed = false;
         this.muted = false;
@@ -350,12 +352,28 @@ export class SoundEngine {
         const previousWeatherId = this.resolved.world.weatherId;
         const previousJourneyTime = this.resolved.world.journeyTime;
         const hadWorldState = this.hasWorldState;
+        const lightningEventId = Math.max(
+            0,
+            Number(snapshot?.lightningEventId) || 0,
+        );
         this.lastSnapshot = snapshot ?? {};
         this.resolved = resolveSoundState(this.lastSnapshot, {
             presentationPaused: this.presentationPaused,
             musicLevel: this.resolveBusOutput("music"),
         });
         this.hasWorldState = true;
+        if (
+            hadWorldState &&
+            this.lastLightningEventId !== null &&
+            lightningEventId > this.lastLightningEventId &&
+            this.state === "ready"
+        ) {
+            this.scheduleWeatherTrigger(
+                "weather-thunder",
+                snapshot?.thunderDelay,
+            );
+        }
+        this.lastLightningEventId = lightningEventId;
         const journeyRestarted =
             hadWorldState &&
             this.resolved.world.journeyTime < previousJourneyTime - 0.25;
@@ -397,11 +415,31 @@ export class SoundEngine {
     }
 
     resetAudioTimeline() {
+        for (const timer of this.pendingWeatherTimers)
+            globalThis.clearTimeout(timer);
+        this.pendingWeatherTimers.clear();
         this.lastTriggerAt.clear();
         this.ambienceCueEnvelope = null;
         for (const [id, layer] of this.layers) {
             if (!layer.asset.loop) this.stopLayer(id, { fade: 0.12 });
         }
+    }
+
+    scheduleWeatherTrigger(trigger, delaySeconds = 0) {
+        if (
+            this.state !== "ready" ||
+            !this.manifest.some((asset) => asset.trigger === trigger)
+        ) return false;
+        const delay = Math.max(0, Number(delaySeconds) || 0);
+        if (delay <= 0) return this.playTrigger(trigger);
+        const timer = globalThis.setTimeout(() => {
+            this.pendingWeatherTimers.delete(timer);
+            if (!this.destroyed && this.state === "ready")
+                this.playTrigger(trigger);
+        }, delay * 1000);
+        timer?.unref?.();
+        this.pendingWeatherTimers.add(timer);
+        return true;
     }
 
     setPresentationPaused(paused) {
@@ -1300,6 +1338,9 @@ export class SoundEngine {
         this.lastTriggerAt.clear();
         this.triggerGeneration.clear();
         this.manualAuditionToken += 1;
+        for (const timer of this.pendingWeatherTimers)
+            globalThis.clearTimeout(timer);
+        this.pendingWeatherTimers.clear();
         for (const { stateGain, volumeGain, filter } of this.buses.values()) {
             stateGain.disconnect?.();
             volumeGain.disconnect?.();
