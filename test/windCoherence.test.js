@@ -77,4 +77,9 @@ test("all shader media consume the shared living gust field", () => {
     assert.match(shader, /let smokeGust = livingGust\(trainUv\)/);
     assert.match(shader, /let mistGust = livingGust\(uv\)/);
     assert.match(shader, /uniforms\.weatherTimes\.z/);
+    assert.match(shader, /fn snowField\(/);
+    assert.match(shader, /let snowWind = windDirection/);
+    assert.match(shader, /fn lightningProfile\(/);
+    assert.match(shader, /fwidth\(bg\.cloud\)/);
+    assert.match(shader, /uniforms\.weatherAccumulation\.x/);
 });

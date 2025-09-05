@@ -324,7 +324,7 @@ test("weather cue envelope crossfades back into ambience", () => {
 
 test("production audio manifest points to deployed source files", () => {
     const normalized = normalizeAudioManifest(AUDIO_ASSETS);
-    assert.equal(normalized.length, 19);
+    assert.equal(normalized.length, 20);
     for (const asset of normalized) {
         for (const source of asset.sources) {
             const file = new URL(`../public${source.src}`, import.meta.url);
@@ -496,6 +496,34 @@ test("reactive weather layers load on demand and train changes fire cues", async
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(
         [...engine.layers.keys()].some((id) => id.startsWith("stop-test#")),
+        true,
+    );
+    await engine.destroy();
+});
+
+test("a new lightning event schedules an authored thunder one-shot", async () => {
+    const engine = new SoundEngine({
+        manifest: [{
+            id: "thunder-test",
+            bus: "environment",
+            role: "thunder",
+            src: "/thunder.ogg",
+            loop: false,
+            trigger: "weather-thunder",
+            triggerGroup: "atmosphere-event",
+        }],
+        AudioContextClass: FakeAudioContext,
+        fetchFn: async () => ({
+            ok: true,
+            arrayBuffer: async () => new ArrayBuffer(8),
+        }),
+    });
+    engine.updateWorldState({ lightningEventId: 0 });
+    await engine.unlock();
+    engine.updateWorldState({ lightningEventId: 1, thunderDelay: 0 });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(
+        [...engine.layers.keys()].some((id) => id.startsWith("thunder-test#")),
         true,
     );
     await engine.destroy();

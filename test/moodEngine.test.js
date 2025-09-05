@@ -30,7 +30,11 @@ test("every authored scene explicitly selects its default physical weather", () 
     }
     assert.equal(
         MOODS.find(({ id }) => id === "night-rail").defaultWeatherId,
-        "haze",
+        "distant-storm",
+    );
+    assert.equal(
+        MOODS.find(({ id }) => id === "sakura").defaultWeatherId,
+        "snowfall",
     );
 });
 

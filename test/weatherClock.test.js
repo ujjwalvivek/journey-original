@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
     WeatherClock,
+    LIGHTNING_CYCLE_SECONDS,
     resolveGust,
+    resolveLightningEvent,
 } from "../src/weather/weatherClock.js";
 
 test("weather phases advance independently from journey travel", () => {
@@ -46,6 +48,37 @@ test("mist speed scales future mist motion without scrubbing its phase", () => {
     clock.advance(0.1, { windSpeed: 1, mistSpeed: 2 });
     const fastAdvance = clock.mistTime - slowAdvance;
     assert.ok(Math.abs(fastAdvance / slowAdvance - 4) < Number.EPSILON);
+});
+
+test("snow has its own accumulated phase", () => {
+    const clock = new WeatherClock();
+    clock.advance(0.1, { rainSpeed: 1.8, snowSpeed: 0.5 });
+    assert.equal(clock.precipitationTime, 0.18000000000000002);
+    assert.equal(clock.snowTime, 0.05);
+});
+
+test("snow accumulates during snowfall and melts after it ends", () => {
+    const clock = new WeatherClock();
+    for (let frame = 0; frame < 20; frame += 1)
+        clock.advance(0.1, { snowfall: 1, snowMeltRate: 0.05 });
+    const accumulated = clock.snowCover;
+    assert.ok(accumulated > 0.5);
+    for (let frame = 0; frame < 10; frame += 1)
+        clock.advance(0.1, { snowfall: 0, snowMeltRate: 0.05 });
+    assert.ok(clock.snowCover < accumulated);
+    assert.ok(clock.snowCover > accumulated - 0.05);
+});
+
+test("lightning emits one event when its authored strike time is crossed", () => {
+    const strike = resolveLightningEvent(0, 0.7);
+    const clock = new WeatherClock();
+    const steps = Math.ceil((strike.strikeAt + 0.05) / 0.1);
+    for (let step = 0; step < steps; step += 1)
+        clock.advance(0.1, { lightning: 0.7 });
+    assert.equal(LIGHTNING_CYCLE_SECONDS, 10);
+    assert.equal(clock.lightningEventId, 1);
+    assert.ok(clock.lightningStrikeX >= 0.16 && clock.lightningStrikeX <= 0.84);
+    assert.equal(clock.thunderDelay, 0);
 });
 
 test("surfaces absorb precipitation and dry at the authored rate", () => {

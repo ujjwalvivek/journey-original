@@ -42,6 +42,11 @@ test("the weather lab exposes only shader-backed controls", () => {
         "foregroundRainAmount",
         "atmosphericDesaturation",
         "mistSpeed",
+        "horizonGlow",
+        "lightning",
+        "snowfall",
+        "snowSpeed",
+        "snowMeltRate",
         "wetness",
         "lightScatter",
         "dryingRate",
@@ -53,6 +58,19 @@ test("new atmosphere and rain composition controls have neutral authored default
     assert.equal(BASE_WEATHER.rainDepthDistribution, 0);
     assert.equal(BASE_WEATHER.rainContrast, 0.5);
     assert.equal(BASE_WEATHER.foregroundRainAmount, 1);
+    assert.equal(BASE_WEATHER.horizonGlow, 0);
+    assert.equal(BASE_WEATHER.lightning, 0);
+    assert.equal(BASE_WEATHER.snowfall, 0);
+    assert.equal(BASE_WEATHER.snowMeltRate, 0.035);
+});
+
+test("snowfall and distant storm remain physically separate from rain", () => {
+    const snowfall = resolveAuthoredWeather("snowfall");
+    const distantStorm = resolveAuthoredWeather("distant-storm");
+    assert.ok(snowfall.snowfall > 0);
+    assert.equal(snowfall.precipitation, 0);
+    assert.ok(distantStorm.lightning > 0);
+    assert.equal(distantStorm.precipitation, 0);
 });
 
 test("new atmosphere and rain composition overrides are clamped", () => {
