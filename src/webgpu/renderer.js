@@ -17,7 +17,7 @@ import { WeatherFront } from "../weather/weatherFront.js";
 import { advanceSimulationClocks } from "../weather/weatherSimulation.js";
 
 const BUFFER_FORMAT = "rgba16float";
-const UNIFORM_FLOATS = 128;
+const UNIFORM_FLOATS = 132;
 const UNIFORM_BYTES = UNIFORM_FLOATS * 4;
 
 export class JourneyRenderer {
@@ -788,6 +788,10 @@ export class JourneyRenderer {
         this.uniformData[125] = 0;
         this.uniformData[126] = 0;
         this.uniformData[127] = 0;
+        this.uniformData[128] = mood.cloudThresholdOuter;
+        this.uniformData[129] = mood.cloudThresholdMiddle;
+        this.uniformData[130] = mood.cloudThresholdInner;
+        this.uniformData[131] = mood.cloudThresholdCore;
 
         this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
     }
