@@ -33,6 +33,7 @@ struct Uniforms {
   showcaseTitle: vec4f, // progress, active, reserved, reserved
   weatherEffects: vec4f, // x snowfall, y lightning, z sky-edge glow, w snow time
   weatherAccumulation: vec4f, // x accumulated snow cover, yzw reserved
+  weatherCloudThresholds: vec4f, // x outer edge, y middle, z inner, w core
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;

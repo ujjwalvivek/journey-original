@@ -33,6 +33,7 @@ struct Uniforms {
   showcaseTitle: vec4f,
   weatherEffects: vec4f, // x snowfall, y lightning, z sky-edge glow, w snow time
   weatherAccumulation: vec4f, // x accumulated snow cover, yzw reserved
+  weatherCloudThresholds: vec4f, // x outer edge, y middle, z inner, w core
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -320,6 +321,20 @@ fn backgroundCloud(t: f32) -> BackgroundSample {
   return BackgroundSample(cloudTone(t), 1.0);
 }
 
+// These positions run from the visible edge of a cloud towards its core.
+// Keeping that direction explicit matters: the smallest historic cutoff
+// (0.04) controls the outer rim, while the largest (0.20) controls only the
+// deepest band.
+fn cloudThreshold(position: f32) -> f32 {
+  let outer = uniforms.weatherCloudThresholds.x;
+  let middle = uniforms.weatherCloudThresholds.y;
+  let inner = uniforms.weatherCloudThresholds.z;
+  let core = uniforms.weatherCloudThresholds.w;
+  if (position <= 1.0) { return mix(outer, middle, position); }
+  if (position <= 2.0) { return mix(middle, inner, position - 1.0); }
+  return mix(inner, core, clamp(position - 2.0, 0.0, 1.0));
+}
+
 fn foreground(uvIn: vec2f, t: f32) -> vec4f {
   var uv = uvIn;
   uv.y -= uniforms.atmosphere.y;
@@ -329,19 +344,21 @@ fn foreground(uvIn: vec2f, t: f32) -> vec4f {
   var disp = 1.7;
   var dist = 1.0;
   var uv2 = cloudCoordinates(uv, t, dist, 40.0);
-  var h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x * 0.7;
-  if (uv.y < h + midlevel - 0.12) { return cloudLayer(0.04, 1.0); }
-  if (uv.y < h + midlevel - 0.08) { return cloudLayer(0.14, 1.0); }
-  if (uv.y < h + midlevel - 0.04) { return cloudLayer(0.24, 1.0); }
+  var h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w +
+    uniforms.atmosphere.x * 0.7;
+  if (uv.y < h + midlevel - cloudThreshold(2.0)) { return cloudLayer(0.04, 1.0); }
+  if (uv.y < h + midlevel - cloudThreshold(1.0)) { return cloudLayer(0.14, 1.0); }
+  if (uv.y < h + midlevel - cloudThreshold(0.0)) { return cloudLayer(0.24, 1.0); }
   if (uv.y < h + midlevel)        { return cloudLayer(0.34, 1.0); }
 
   midlevel = 0.05;
   disp = 1.7;
   dist = 2.0;
   uv2 = cloudCoordinates(uv, t, dist, 38.0);
-  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x * 0.7;
-  if (uv.y < h + midlevel - 0.10) { return cloudLayer(0.7, 1.0); }
-  if (uv.y < h + midlevel - 0.04) { return cloudLayer(0.86, 1.0); }
+  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w +
+    uniforms.atmosphere.x * 0.7;
+  if (uv.y < h + midlevel - cloudThreshold(1.5)) { return cloudLayer(0.7, 1.0); }
+  if (uv.y < h + midlevel - cloudThreshold(0.0)) { return cloudLayer(0.86, 1.0); }
   if (uv.y < h + midlevel)        { return cloudLayer(0.96, 1.0); }
 
   return cloudLayer(0.96, 0.0);
@@ -354,106 +371,118 @@ fn background(uvIn: vec2f, t: f32) -> BackgroundSample {
   var disp = 0.9;
   var dist = 10.0;
   var uv2 = cloudCoordinates(uv, t, dist, 32.5);
-  var h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.14) { return backgroundCloud(0.24); }
-  if (uv.y < h + midlevel - 0.10) { return backgroundCloud(0.42); }
-  if (uv.y < h + midlevel - 0.07) { return backgroundCloud(0.58); }
+  var h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w +
+    uniforms.atmosphere.x;
+  if (uv.y < h + midlevel - cloudThreshold(2.25)) { return backgroundCloud(0.24); }
+  if (uv.y < h + midlevel - cloudThreshold(1.5)) { return backgroundCloud(0.42); }
+  if (uv.y < h + midlevel - cloudThreshold(0.75)) { return backgroundCloud(0.58); }
   if (uv.y < h + midlevel)        { return backgroundCloud(0.68); }
 
   midlevel = 0.35;
   disp = 1.0;
   dist = 15.0;
   uv2 = cloudCoordinates(uv, t, dist, 30.0);
-  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.04) { return backgroundCloud(0.86); }
+  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w +
+    uniforms.atmosphere.x;
+  if (uv.y < h + midlevel - cloudThreshold(0.0)) { return backgroundCloud(0.86); }
   if (uv.y < h + midlevel)        { return backgroundCloud(0.96); }
 
   midlevel = 0.35;
   disp = 3.5;
   dist = 20.0;
   uv2 = cloudCoordinates(uv, t, dist, 27.5);
-  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.12) { return backgroundCloud(0.04); }
-  if (uv.y < h + midlevel - 0.08) { return backgroundCloud(0.14); }
-  if (uv.y < h + midlevel - 0.04) { return backgroundCloud(0.24); }
+  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w +
+    uniforms.atmosphere.x;
+  if (uv.y < h + midlevel - cloudThreshold(2.0)) { return backgroundCloud(0.04); }
+  if (uv.y < h + midlevel - cloudThreshold(1.0)) { return backgroundCloud(0.14); }
+  if (uv.y < h + midlevel - cloudThreshold(0.0)) { return backgroundCloud(0.24); }
   if (uv.y < h + midlevel)        { return backgroundCloud(0.34); }
 
   midlevel = 0.45;
   disp = 2.0;
   dist = 25.0;
   uv2 = cloudCoordinates(uv, t, dist, 23.0);
-  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.04) { return backgroundCloud(0.68); }
+  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w +
+    uniforms.atmosphere.x;
+  if (uv.y < h + midlevel - cloudThreshold(0.0)) { return backgroundCloud(0.68); }
   if (uv.y < h + midlevel)        { return backgroundCloud(0.78); }
 
   midlevel = 0.5;
   disp = 2.3;
   dist = 30.0;
   uv2 = cloudCoordinates(uv, t, dist, 20.5);
-  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.12) { return backgroundCloud(0.02); }
-  if (uv.y < h + midlevel - 0.08) { return backgroundCloud(0.12); }
-  if (uv.y < h + midlevel - 0.04) { return backgroundCloud(0.46); }
+  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w +
+    uniforms.atmosphere.x;
+  if (uv.y < h + midlevel - cloudThreshold(2.0)) { return backgroundCloud(0.02); }
+  if (uv.y < h + midlevel - cloudThreshold(1.0)) { return backgroundCloud(0.12); }
+  if (uv.y < h + midlevel - cloudThreshold(0.0)) { return backgroundCloud(0.46); }
   if (uv.y < h + midlevel)        { return backgroundCloud(0.62); }
 
   midlevel = 0.5;
   disp = 2.5;
   dist = 35.0;
   uv2 = cloudCoordinates(uv, t, dist, 18.0);
-  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.10) { return backgroundCloud(0.52); }
-  if (uv.y < h + midlevel - 0.05) { return backgroundCloud(0.64); }
+  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w +
+    uniforms.atmosphere.x;
+  if (uv.y < h + midlevel - cloudThreshold(1.5)) { return backgroundCloud(0.52); }
+  if (uv.y < h + midlevel - cloudThreshold(0.25)) { return backgroundCloud(0.64); }
   if (uv.y < h + midlevel)        { return backgroundCloud(0.73); }
 
   midlevel = 0.6;
   disp = 2.0;
   dist = 40.0;
   uv2 = cloudCoordinates(uv, t, dist, 18.0);
-  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.10) { return backgroundCloud(0.72); }
+  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w +
+    uniforms.atmosphere.x;
+  if (uv.y < h + midlevel - cloudThreshold(1.5)) { return backgroundCloud(0.72); }
   if (uv.y < h + midlevel)        { return backgroundCloud(0.84); }
 
   midlevel = 0.75;
   disp = 3.5;
   dist = 45.0;
   uv2 = cloudCoordinates(uv, t, dist, 15.5);
-  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.20) { return backgroundCloud(0.7); }
-  if (uv.y < h + midlevel - 0.15) { return backgroundCloud(0.62); }
-  if (uv.y < h + midlevel - 0.10) { return backgroundCloud(0.58); }
+  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w +
+    uniforms.atmosphere.x;
+  if (uv.y < h + midlevel - cloudThreshold(3.0)) { return backgroundCloud(0.7); }
+  if (uv.y < h + midlevel - cloudThreshold(2.375)) { return backgroundCloud(0.62); }
+  if (uv.y < h + midlevel - cloudThreshold(1.5)) { return backgroundCloud(0.58); }
   if (uv.y < h + midlevel)        { return backgroundCloud(0.78); }
 
   midlevel = 0.7;
   disp = 2.7;
   dist = 50.0;
   uv2 = cloudCoordinates(uv, t, dist, 12.0);
-  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.04) { return backgroundCloud(0.32); }
+  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w +
+    uniforms.atmosphere.x;
+  if (uv.y < h + midlevel - cloudThreshold(0.0)) { return backgroundCloud(0.32); }
   if (uv.y < h + midlevel)        { return backgroundCloud(0.42); }
 
   midlevel = 0.8;
   disp = 2.7;
   dist = 60.0;
   uv2 = cloudCoordinates(uv, t, dist, 9.5);
-  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.10) { return backgroundCloud(0.66); }
+  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w +
+    uniforms.atmosphere.x;
+  if (uv.y < h + midlevel - cloudThreshold(1.5)) { return backgroundCloud(0.66); }
   if (uv.y < h + midlevel)        { return backgroundCloud(0.84); }
 
   midlevel = 0.9;
   disp = 3.0;
   dist = 70.0;
   uv2 = cloudCoordinates(uv, t, dist, 7.0);
-  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.10) { return backgroundCloud(0.14); }
-  if (uv.y < h + midlevel - 0.05) { return backgroundCloud(0.22); }
+  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w +
+    uniforms.atmosphere.x;
+  if (uv.y < h + midlevel - cloudThreshold(1.5)) { return backgroundCloud(0.14); }
+  if (uv.y < h + midlevel - cloudThreshold(0.25)) { return backgroundCloud(0.22); }
   if (uv.y < h + midlevel)        { return backgroundCloud(0.34); }
 
   midlevel = 1.0;
   disp = 5.0;
   dist = 100.0;
   uv2 = cloudCoordinates(uv, t, dist, 3.5);
-  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w + uniforms.atmosphere.x;
-  if (uv.y < h + midlevel - 0.10) { return backgroundCloud(0.9); }
+  h = (fbm(uv2, 8) - 0.5) * disp * uniforms.atmosphere.w +
+    uniforms.atmosphere.x;
+  if (uv.y < h + midlevel - cloudThreshold(1.5)) { return backgroundCloud(0.9); }
   if (uv.y < h + midlevel)        { return backgroundCloud(1.0); }
 
   return BackgroundSample(uniforms.sceneSky.rgb, 0.0);
