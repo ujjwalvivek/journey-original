@@ -32,6 +32,10 @@ test("the weather lab exposes only shader-backed controls", () => {
     for (const key of [
         "windDirection",
         "gustiness",
+        "cloudThresholdOuter",
+        "cloudThresholdMiddle",
+        "cloudThresholdInner",
+        "cloudThresholdCore",
         "precipitation",
         "rainDensity",
         "rainSpeed",
@@ -62,6 +66,27 @@ test("new atmosphere and rain composition controls have neutral authored default
     assert.equal(BASE_WEATHER.lightning, 0);
     assert.equal(BASE_WEATHER.snowfall, 0);
     assert.equal(BASE_WEATHER.snowMeltRate, 0.035);
+    assert.equal(BASE_WEATHER.cloudThresholdOuter, 0.04);
+    assert.equal(BASE_WEATHER.cloudThresholdMiddle, 0.08);
+    assert.equal(BASE_WEATHER.cloudThresholdInner, 0.12);
+    assert.equal(BASE_WEATHER.cloudThresholdCore, 0.2);
+});
+
+test("cloud thresholds are authored from visible edge to core", () => {
+    const thresholds = [
+        BASE_WEATHER.cloudThresholdOuter,
+        BASE_WEATHER.cloudThresholdMiddle,
+        BASE_WEATHER.cloudThresholdInner,
+        BASE_WEATHER.cloudThresholdCore,
+    ];
+    assert.deepEqual(thresholds, [...thresholds].sort((a, b) => a - b));
+
+    const engine = new WeatherEngine(0);
+    engine.setOverride("cloudThresholdOuter", 1);
+    engine.setOverride("cloudThresholdCore", 0);
+    const state = engine.update(0, BASE_WEATHER);
+    assert.equal(state.cloudThresholdOuter, 0.06);
+    assert.equal(state.cloudThresholdCore, 0.16);
 });
 
 test("snowfall and distant storm remain physically separate from rain", () => {

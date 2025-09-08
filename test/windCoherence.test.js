@@ -82,4 +82,8 @@ test("all shader media consume the shared living gust field", () => {
     assert.match(shader, /fn lightningProfile\(/);
     assert.match(shader, /fwidth\(bg\.cloud\)/);
     assert.match(shader, /uniforms\.weatherAccumulation\.x/);
+    assert.match(shader, /fn cloudThreshold\(position: f32\)/);
+    assert.match(shader, /let outer = uniforms\.weatherCloudThresholds\.x/);
+    assert.match(shader, /let core = uniforms\.weatherCloudThresholds\.w/);
+    assert.match(shader, /let smokeNoise = fbm2\(uv2, 8\)/);
 });
